@@ -1,0 +1,39 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'org.opensearch.knn'
+version = '1.0-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.lucene:lucene-core:10.3.1'
+}
+
+application {
+    mainClass = 'org.opensearch.knn.reorder.VectorReorder'
+    applicationDefaultJvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+}
+
+// Task to run k-means test
+tasks.register('runKMeansTest', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.KMeansTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+}
+
+// Task to run cluster sort test
+tasks.register('runClusterSortTest', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.ClusterSortTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+}
