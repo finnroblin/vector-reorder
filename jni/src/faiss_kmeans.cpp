@@ -4,9 +4,15 @@
  */
 
 #include "org_opensearch_knn_reorder_FaissKMeansService.h"
+#include "org_opensearch_knn_reorder_FaissIndexService.h"
 #include <faiss/Clustering.h>
 #include <faiss/IndexFlat.h>
+#include <faiss/IndexHNSW.h>
+#include <faiss/IndexIDMap.h>
+#include <faiss/index_factory.h>
+#include <faiss/index_io.h>
 #include <vector>
+#include <string>
 
 // Metric types matching SpaceType
 static const int METRIC_L2 = 0;
@@ -112,4 +118,68 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissKMeansService_freeVe
     JNIEnv* env, jclass cls, jlong address)
 {
     delete[] reinterpret_cast<float*>(address);
+}
+
+
+// ============================================================================
+// FaissIndexService JNI implementation
+// ============================================================================
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteIndex(
+    JNIEnv* env, jclass cls,
+    jlong vectorsAddress, jint numVectors, jint dimension, jintArray idsJ,
+    jstring indexDescriptionJ, jstring spaceTypeJ, jint efConstruction, jstring outputPathJ)
+{
+    // Get vectors from native memory
+    float* vectors = reinterpret_cast<float*>(vectorsAddress);
+    int n = numVectors;
+    int d = dimension;
+    
+    // Get strings from Java
+    const char* indexDescCStr = env->GetStringUTFChars(indexDescriptionJ, nullptr);
+    const char* spaceTypeCStr = env->GetStringUTFChars(spaceTypeJ, nullptr);
+    const char* outputPathCStr = env->GetStringUTFChars(outputPathJ, nullptr);
+    
+    std::string indexDesc(indexDescCStr);
+    std::string spaceType(spaceTypeCStr);
+    std::string outputPath(outputPathCStr);
+    
+    env->ReleaseStringUTFChars(indexDescriptionJ, indexDescCStr);
+    env->ReleaseStringUTFChars(spaceTypeJ, spaceTypeCStr);
+    env->ReleaseStringUTFChars(outputPathJ, outputPathCStr);
+    
+    // Determine metric type
+    faiss::MetricType metric = faiss::METRIC_L2;
+    if (spaceType == "innerproduct" || spaceType == "cosinesimil") {
+        metric = faiss::METRIC_INNER_PRODUCT;
+    }
+    
+    // Create index using FAISS factory
+    faiss::Index* index = faiss::index_factory(d, indexDesc.c_str(), metric);
+    
+    // Set HNSW parameters if applicable
+    if (auto* hnswIndex = dynamic_cast<faiss::IndexHNSW*>(index)) {
+        hnswIndex->hnsw.efConstruction = efConstruction;
+    }
+    
+    // Get IDs from Java array
+    jint* idsPtr = env->GetIntArrayElements(idsJ, nullptr);
+    int numIds = env->GetArrayLength(idsJ);
+    
+    // Convert to faiss::idx_t (int64_t)
+    std::vector<faiss::idx_t> ids(numIds);
+    for (int i = 0; i < numIds; i++) {
+        ids[i] = idsPtr[i];
+    }
+    env->ReleaseIntArrayElements(idsJ, idsPtr, JNI_ABORT);
+    
+    // Wrap with IndexIDMap for ID mapping
+    faiss::IndexIDMap idMap(index);
+    idMap.own_fields = true;  // idMap will delete index when destroyed
+    
+    // Add vectors with IDs
+    idMap.add_with_ids(n, vectors, ids.data());
+    
+    // Write index to file
+    faiss::write_index(&idMap, outputPath.c_str());
 }

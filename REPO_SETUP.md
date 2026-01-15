@@ -113,7 +113,12 @@ The k-NN plugin uses:
 - [x] Add FAISS JNI for k-means clustering
 - [x] Implement cluster command to sort vectors by cluster assignment
 - [x] Add distance-based secondary sort within clusters
-- [ ] Write reordered vectors to new file
+- [x] Write reordered vectors to new file
+
+### TODO Jan 15 
+- [ ] Make sure the hotswap works and we can do an e2e sift search run.
+- [ ] Support multiple segments
+- [ ] Try out for binary data (32x compression), see if the recall is non-zero. 
 
 ## Issue: Custom Codec Dependency
 The k-NN index uses `KNN1030Codec` which is a custom codec from the k-NN plugin.

@@ -37,3 +37,61 @@ tasks.register('runClusterSortTest', JavaExec) {
     mainClass = 'org.opensearch.knn.reorder.ClusterSortTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
 }
+
+
+// Task to run FAISS file permuter test
+tasks.register('runFaissPermuterTest', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.FaissFilePermuterTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+// Task to parse FAISS file structure
+tasks.register('parseFaiss', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.FaissFilePermuter'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    args = project.hasProperty('faissFile') ? [project.faissFile, 'parse'] : ['raw_test_files/_z_165_train.faiss', 'parse']
+    workingDir = projectDir
+}
+
+// Task to test FAISS index rebuilding
+tasks.register('testRebuild', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.FaissIndexRebuilderTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+// Task to rebuild sift-128 with cluster-sorted order
+tasks.register('rebuildSift128', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.Sift128RebuildTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    workingDir = projectDir
+}
+
+// Reorder tool - usage: ./gradlew reorder -PvecFile=<path> -PoutputFaiss=<path> -PoutputVec=<path> [-Pclusters=1000]
+tasks.register('reorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.ReorderTool'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    args = [
+        project.findProperty('vecFile') ?: '',
+        project.findProperty('outputFaiss') ?: '',
+        project.findProperty('outputVec') ?: '',
+        project.findProperty('clusters') ?: '1000'
+    ]
+}
+
+// E2E script - usage: ./gradlew runE2E -PindexDir=<path> [-Pclusters=1000]
+tasks.register('runE2E', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.E2EReorderScript'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    args = [
+        project.findProperty('indexDir') ?: '',
+        project.findProperty('clusters') ?: '1000'
+    ]
+}

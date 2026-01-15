@@ -275,6 +275,54 @@ public class VectorReorder {
         }
     }
 
+    /**
+     * Writes vectors to a new .vec file in reordered order.
+     * newOrder[newIdx] = oldIdx means vector at oldIdx goes to position newIdx.
+     */
+    public static void writeReorderedVecFile(String srcVecPath, String dstVecPath, int[] newOrder) throws IOException {
+        Path srcPath = Paths.get(srcVecPath);
+        Path srcDir = srcPath.getParent();
+        String srcVecFileName = srcPath.getFileName().toString();
+        String srcMetaFileName = srcVecFileName.replace(".vec", ".vemf");
+        
+        Path dstPath = Paths.get(dstVecPath);
+        Path dstDir = dstPath.getParent();
+        String dstVecFileName = dstPath.getFileName().toString();
+
+        try (FSDirectory srcDirectory = FSDirectory.open(srcDir);
+             FSDirectory dstDirectory = FSDirectory.open(dstDir)) {
+            
+            VectorFieldMeta meta = readMetadata(srcDirectory, srcMetaFileName);
+            int vectorBytes = meta.dimension * Float.BYTES;
+            
+            try (IndexInput vecInput = srcDirectory.openInput(srcVecFileName, IOContext.DEFAULT);
+                 IndexOutput out = dstDirectory.createOutput(dstVecFileName, IOContext.DEFAULT)) {
+
+                // Copy header unchanged
+                byte[] header = new byte[(int) meta.vectorDataOffset];
+                vecInput.readBytes(header, 0, header.length);
+                out.writeBytes(header, header.length);
+
+                // Write vectors in new order
+                IndexInput vectorSlice = vecInput.slice("vectors", meta.vectorDataOffset, meta.vectorDataLength);
+                byte[] buffer = new byte[vectorBytes];
+                
+                for (int newIdx = 0; newIdx < meta.size; newIdx++) {
+                    int oldIdx = newOrder[newIdx];
+                    vectorSlice.seek((long) oldIdx * vectorBytes);
+                    vectorSlice.readBytes(buffer, 0, vectorBytes);
+                    out.writeBytes(buffer, vectorBytes);
+                }
+
+                // Copy footer unchanged
+                vecInput.seek(meta.vectorDataOffset + meta.vectorDataLength);
+                byte[] footer = new byte[(int) (vecInput.length() - vecInput.getFilePointer())];
+                vecInput.readBytes(footer, 0, footer.length);
+                out.writeBytes(footer, footer.length);
+            }
+        }
+    }
+
     private static String formatVector(float[] vector) {
         if (vector.length <= 8) {
             return Arrays.toString(vector);
