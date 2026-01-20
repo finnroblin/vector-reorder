@@ -5,18 +5,10 @@
 
 package org.opensearch.knn.reorder;
 
-import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
-
 import java.io.File;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
 
 /**
- * Reorder tool: Takes a .vec file path, clusters vectors, produces reordered .faiss and .vec files.
+ * CLI tool: Cluster vectors and produce reordered .faiss and .vec files.
  * 
  * Usage: ReorderTool <vec-file-path> <output-faiss-path> <output-vec-path> [num-clusters]
  */
@@ -43,34 +35,16 @@ public class ReorderTool {
         // Load vectors
         System.out.println("Loading vectors...");
         long start = System.currentTimeMillis();
-        float[][] vectors = loadVecFile(vecPath);
+        float[][] vectors = VecFileIO.loadVectors(vecPath);
         int n = vectors.length;
         int dim = vectors[0].length;
         System.out.println("Loaded " + n + " vectors of dim " + dim + " in " + (System.currentTimeMillis() - start) + " ms");
         
-        // Cluster
+        // Cluster and sort
         System.out.println("Clustering with k=" + k + "...");
         start = System.currentTimeMillis();
-        long addr = FaissKMeansService.storeVectors(vectors);
-        KMeansResult result = FaissKMeansService.kmeansWithDistances(addr, n, dim, k, 25, FaissKMeansService.METRIC_L2);
-        FaissKMeansService.freeVectors(addr);
+        int[] newOrder = ClusterSorter.clusterAndSort(vectors, k);
         System.out.println("Clustering took " + (System.currentTimeMillis() - start) + " ms");
-        
-        // Sort by (cluster_id, distance)
-        System.out.println("Sorting by cluster...");
-        int[] assignments = result.assignments();
-        float[] distances = result.distances();
-        
-        Integer[] indices = new Integer[n];
-        for (int i = 0; i < n; i++) indices[i] = i;
-        
-        Arrays.sort(indices, (a, b) -> {
-            int cmp = Integer.compare(assignments[a], assignments[b]);
-            return cmp != 0 ? cmp : Float.compare(distances[a], distances[b]);
-        });
-        
-        int[] newOrder = new int[n];
-        for (int i = 0; i < n; i++) newOrder[i] = indices[i];
         
         // Build FAISS index
         System.out.println("Building FAISS index...");
@@ -81,7 +55,7 @@ public class ReorderTool {
         // Write reordered .vec file
         System.out.println("Writing reordered .vec file...");
         start = System.currentTimeMillis();
-        VectorReorder.writeReorderedVecFile(vecPath, outputVecPath, newOrder);
+        VecFileIO.writeReordered(vecPath, outputVecPath, newOrder);
         System.out.println("Vec file write took " + (System.currentTimeMillis() - start) + " ms");
         
         // Verify
@@ -97,37 +71,6 @@ public class ReorderTool {
         } else {
             System.err.println("FAILED: Output files not created");
             System.exit(1);
-        }
-    }
-    
-    private static float[][] loadVecFile(String vecFilePath) throws Exception {
-        Path path = Paths.get(vecFilePath);
-        Path dir = path.getParent();
-        String vecFileName = path.getFileName().toString();
-        String metaFileName = vecFileName.replace(".vec", ".vemf");
-
-        try (FSDirectory directory = FSDirectory.open(dir);
-             IndexInput meta = directory.openInput(metaFileName, IOContext.DEFAULT)) {
-            
-            int headerLength = CodecUtil.headerLength("Lucene99FlatVectorsFormatMeta") + 16 + 1 + "NativeEngines990KnnVectorsFormat_0".length();
-            meta.seek(headerLength);
-            
-            meta.readInt(); // fieldNumber
-            meta.readInt(); // vectorEncoding
-            meta.readInt(); // similarityFunction
-            long vectorDataOffset = meta.readVLong();
-            long vectorDataLength = meta.readVLong();
-            int dimension = meta.readVInt();
-            int size = meta.readInt();
-            
-            float[][] vectors = new float[size][dimension];
-            try (IndexInput vecInput = directory.openInput(vecFileName, IOContext.DEFAULT)) {
-                IndexInput slice = vecInput.slice("vectors", vectorDataOffset, vectorDataLength);
-                for (int i = 0; i < size; i++) {
-                    slice.readFloats(vectors[i], 0, dimension);
-                }
-            }
-            return vectors;
         }
     }
 }

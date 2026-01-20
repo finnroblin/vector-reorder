@@ -5,21 +5,15 @@
 
 package org.opensearch.knn.reorder;
 
-import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.IOContext;
-import org.apache.lucene.store.IndexInput;
-
 import java.io.File;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
 
 /**
- * E2E test script: Backup, reorder, and swap files for a k-NN index.
+ * E2E script: Backup, reorder, and swap files for a k-NN index.
  * 
- * Usage: E2EReorderScript <index-dir>
+ * Usage: E2EReorderScript <index-dir> [num-clusters]
  */
 public class E2EReorderScript {
 
@@ -27,7 +21,7 @@ public class E2EReorderScript {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.err.println("Usage: E2EReorderScript <index-dir>");
+            System.err.println("Usage: E2EReorderScript <index-dir> [num-clusters]");
             System.exit(1);
         }
         
@@ -61,44 +55,33 @@ public class E2EReorderScript {
         Files.copy(faissFile.toPath(), backupDir.resolve(faissFile.getName()));
         Files.copy(vecFile.toPath(), backupDir.resolve(vecFile.getName()));
         
-        // Run reorder
-        String outputFaiss = faissFile.getAbsolutePath().replace(".faiss", "_reordered.faiss");
-        String outputVec = vecFile.getAbsolutePath().replace(".vec", "_reordered.vec");
-        
+        // Load vectors
         System.out.println("\nLoading vectors...");
         long start = System.currentTimeMillis();
-        float[][] vectors = loadVecFile(vecFile.getAbsolutePath());
+        float[][] vectors = VecFileIO.loadVectors(vecFile.getAbsolutePath());
         int n = vectors.length;
         int dim = vectors[0].length;
         System.out.println("Loaded " + n + " vectors of dim " + dim + " in " + (System.currentTimeMillis() - start) + " ms");
         
+        // Cluster and sort
         System.out.println("Clustering with k=" + clusters + "...");
         start = System.currentTimeMillis();
-        long addr = FaissKMeansService.storeVectors(vectors);
-        KMeansResult result = FaissKMeansService.kmeansWithDistances(addr, n, dim, clusters, 25, FaissKMeansService.METRIC_L2);
-        FaissKMeansService.freeVectors(addr);
+        int[] newOrder = ClusterSorter.clusterAndSort(vectors, clusters);
         System.out.println("Clustering took " + (System.currentTimeMillis() - start) + " ms");
         
-        // Sort by (cluster_id, distance)
-        int[] assignments = result.assignments();
-        float[] distances = result.distances();
-        Integer[] indices = new Integer[n];
-        for (int i = 0; i < n; i++) indices[i] = i;
-        Arrays.sort(indices, (a, b) -> {
-            int cmp = Integer.compare(assignments[a], assignments[b]);
-            return cmp != 0 ? cmp : Float.compare(distances[a], distances[b]);
-        });
-        int[] newOrder = new int[n];
-        for (int i = 0; i < n; i++) newOrder[i] = indices[i];
+        // Build FAISS index
+        String outputFaiss = faissFile.getAbsolutePath().replace(".faiss", "_reordered.faiss");
+        String outputVec = vecFile.getAbsolutePath().replace(".vec", "_reordered.vec");
         
         System.out.println("Building FAISS index...");
         start = System.currentTimeMillis();
         FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaiss, 16, 100, FaissIndexRebuilder.SPACE_L2);
         System.out.println("Index build took " + (System.currentTimeMillis() - start) + " ms");
         
+        // Write reordered .vec file
         System.out.println("Writing reordered .vec file...");
         start = System.currentTimeMillis();
-        VectorReorder.writeReorderedVecFile(vecFile.getAbsolutePath(), outputVec, newOrder);
+        VecFileIO.writeReordered(vecFile.getAbsolutePath(), outputVec, newOrder);
         System.out.println("Vec file write took " + (System.currentTimeMillis() - start) + " ms");
         
         // Swap files
@@ -118,36 +101,5 @@ public class E2EReorderScript {
     private static File findFile(File dir, String suffix) {
         File[] files = dir.listFiles((d, name) -> name.endsWith(suffix));
         return (files != null && files.length > 0) ? files[0] : null;
-    }
-    
-    private static float[][] loadVecFile(String vecFilePath) throws Exception {
-        Path path = Paths.get(vecFilePath);
-        Path dir = path.getParent();
-        String vecFileName = path.getFileName().toString();
-        String metaFileName = vecFileName.replace(".vec", ".vemf");
-
-        try (FSDirectory directory = FSDirectory.open(dir);
-             IndexInput meta = directory.openInput(metaFileName, IOContext.DEFAULT)) {
-            
-            int headerLength = CodecUtil.headerLength("Lucene99FlatVectorsFormatMeta") + 16 + 1 + "NativeEngines990KnnVectorsFormat_0".length();
-            meta.seek(headerLength);
-            
-            meta.readInt();
-            meta.readInt();
-            meta.readInt();
-            long vectorDataOffset = meta.readVLong();
-            long vectorDataLength = meta.readVLong();
-            int dimension = meta.readVInt();
-            int size = meta.readInt();
-            
-            float[][] vectors = new float[size][dimension];
-            try (IndexInput vecInput = directory.openInput(vecFileName, IOContext.DEFAULT)) {
-                IndexInput slice = vecInput.slice("vectors", vectorDataOffset, vectorDataLength);
-                for (int i = 0; i < size; i++) {
-                    slice.readFloats(vectors[i], 0, dimension);
-                }
-            }
-            return vectors;
-        }
     }
 }

@@ -459,3 +459,4 @@ Mean recall@k,prod-queries,0.56,
 Mean recall@1,prod-queries,0.89,
 
 So we can see that the recall is much lower in this case. 
+(running with k=1000 centroids).

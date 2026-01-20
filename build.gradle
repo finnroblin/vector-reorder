@@ -24,51 +24,39 @@ application {
     applicationDefaultJvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
 }
 
-// Task to run k-means test
+// Test tasks use test source set
 tasks.register('runKMeansTest', JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
+    classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.KMeansTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
 }
 
-// Task to run cluster sort test
 tasks.register('runClusterSortTest', JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
+    classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.ClusterSortTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
 }
 
-
-// Task to run FAISS file permuter test
 tasks.register('runFaissPermuterTest', JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
+    classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.FaissFilePermuterTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
     workingDir = projectDir
 }
 
-// Task to parse FAISS file structure
-tasks.register('parseFaiss', JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'org.opensearch.knn.reorder.FaissFilePermuter'
-    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
-    args = project.hasProperty('faissFile') ? [project.faissFile, 'parse'] : ['raw_test_files/_z_165_train.faiss', 'parse']
-    workingDir = projectDir
-}
-
-// Task to test FAISS index rebuilding
 tasks.register('testRebuild', JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
+    classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.FaissIndexRebuilderTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
     workingDir = projectDir
 }
 
-// Task to rebuild sift-128 with cluster-sorted order
-tasks.register('rebuildSift128', JavaExec) {
+// Utility tasks
+tasks.register('parseFaiss', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'org.opensearch.knn.reorder.Sift128RebuildTest'
-    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    mainClass = 'org.opensearch.knn.reorder.FaissFilePermuter'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    args = project.hasProperty('faissFile') ? [project.faissFile, 'parse'] : ['raw_test_files/_z_165_train.faiss', 'parse']
     workingDir = projectDir
 }
 
