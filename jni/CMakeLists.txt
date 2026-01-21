@@ -49,7 +49,11 @@ add_library(vectorreorder_faiss SHARED
     src/faiss_kmeans.cpp
 )
 
+# Test executable (no JNI dependency)
+add_executable(faiss_test test/faiss_test.cpp)
+
 target_compile_options(vectorreorder_faiss PRIVATE -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include)
+target_compile_options(faiss_test PRIVATE -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -g -O0)
 
 target_include_directories(vectorreorder_faiss PRIVATE
     ${JNI_INCLUDE_DIRS}
@@ -57,7 +61,18 @@ target_include_directories(vectorreorder_faiss PRIVATE
     ${FAISS_DIR}
 )
 
+target_include_directories(faiss_test PRIVATE
+    ${FAISS_DIR}
+)
+
 target_link_libraries(vectorreorder_faiss PRIVATE 
+    ${FAISS_LIB}
+    OpenMP::OpenMP_CXX
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
+)
+
+target_link_libraries(faiss_test PRIVATE
     ${FAISS_LIB}
     OpenMP::OpenMP_CXX
     ${BLAS_LIBRARIES}

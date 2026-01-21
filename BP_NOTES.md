@@ -47,4 +47,6 @@ The valuemap internally is built by calling comptuePermutation on the vectors. T
 
 Calls into the ReorderTask from there, which shuffles according to the left and the right centroid. The idea is to maximize bias -- every vector should be close to its centroid and far from its anti-centroid.
 
-The merger takes in the modified docid map, and rebuilds the merged graph with new docids
+The merger takes in the modified docid map, and rebuilds the merged graph with new docids.
+
+Note: TODO: We have to change the cmake compile flags so that they don't have any -g option or -O0 option when actually compiling the reordering module.

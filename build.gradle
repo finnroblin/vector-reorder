@@ -24,6 +24,12 @@ application {
     applicationDefaultJvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
 }
 
+// C++ test task
+tasks.register('runCppTest', Exec) {
+    workingDir = "${projectDir}/jni/build"
+    commandLine './faiss_test'
+}
+
 // Test tasks use test source set
 tasks.register('runKMeansTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
