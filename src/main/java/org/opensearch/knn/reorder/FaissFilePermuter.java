@@ -339,6 +339,27 @@ public class FaissFilePermuter {
         }
     }
 
+    /**
+     * Read the ID mapping array from a .faiss file.
+     * @return array where idMapping[faissOrd] = docID
+     */
+    public static long[] readIdMapping(String faissPath) throws IOException {
+        FaissStructure s = parseStructure(faissPath);
+        Path path = Paths.get(faissPath);
+        
+        try (FSDirectory directory = FSDirectory.open(path.getParent());
+             IndexInput input = directory.openInput(path.getFileName().toString(), IOContext.DEFAULT)) {
+            
+            input.seek(s.idMappingStart);
+            long count = input.readLong();
+            long[] mapping = new long[(int) count];
+            for (int i = 0; i < count; i++) {
+                mapping[i] = input.readLong();
+            }
+            return mapping;
+        }
+    }
+
     public static void main(String[] args) throws IOException {
         if (args.length < 1) {
             System.err.println("Usage: FaissFilePermuter <faiss-file> [parse|permute]");

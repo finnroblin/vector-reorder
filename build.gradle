@@ -16,7 +16,8 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.apache.lucene:lucene-core:10.3.1'
+    implementation 'org.apache.lucene:lucene-core:10.3.2'
+    implementation 'org.apache.lucene:lucene-misc:10.3.2'
 }
 
 application {
@@ -57,6 +58,13 @@ tasks.register('testRebuild', JavaExec) {
     workingDir = projectDir
 }
 
+tasks.register('testBpReorder', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.BpReordererTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    workingDir = projectDir
+}
+
 // Utility tasks
 tasks.register('parseFaiss', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
@@ -87,5 +95,32 @@ tasks.register('runE2E', JavaExec) {
     args = [
         project.findProperty('indexDir') ?: '',
         project.findProperty('clusters') ?: '1000'
+    ]
+}
+
+// BP reorder tool - usage: ./gradlew bpReorder -PvecFile=<path> -PoutputFaiss=<path> -PoutputVec=<path>
+tasks.register('bpReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.BpReorderTool'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    args = [
+        project.findProperty('vecFile') ?: '',
+        project.findProperty('outputFaiss') ?: '',
+        project.findProperty('outputVec') ?: ''
+    ]
+}
+
+// BP reorder raw_test_files to bp_files
+tasks.register('bpReorderRaw', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.BpReorderTool'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    doFirst {
+        file("${projectDir}/bp_files").mkdirs()
+    }
+    args = [
+        "${projectDir}/raw_test_files/_z_NativeEngines990KnnVectorsFormat_0.vec",
+        "${projectDir}/bp_files/_z_165_train.faiss",
+        "${projectDir}/bp_files/_z_NativeEngines990KnnVectorsFormat_0.vec"
     ]
 }

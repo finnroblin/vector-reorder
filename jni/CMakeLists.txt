@@ -46,11 +46,15 @@ message(STATUS "Using FAISS library: ${FAISS_LIB}")
 
 # Our JNI library
 add_library(vectorreorder_faiss SHARED
-    src/faiss_kmeans.cpp
+    src/faiss_core.cpp
+    src/faiss_jni.cpp
 )
 
 # Test executable (no JNI dependency)
-add_executable(faiss_test test/faiss_test.cpp)
+add_executable(faiss_test 
+    src/faiss_core.cpp
+    test/faiss_test.cpp
+)
 
 target_compile_options(vectorreorder_faiss PRIVATE -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include)
 target_compile_options(faiss_test PRIVATE -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -g -O0)
@@ -63,6 +67,7 @@ target_include_directories(vectorreorder_faiss PRIVATE
 
 target_include_directories(faiss_test PRIVATE
     ${FAISS_DIR}
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(vectorreorder_faiss PRIVATE 

@@ -25,6 +25,7 @@ public class ClusterSorter {
         final boolean reverseDistance = (metricType == FaissKMeansService.METRIC_INNER_PRODUCT);
         
         Arrays.sort(indices, (a, b) -> {
+            // sorts by the cluster.
             int cmp = Integer.compare(assignments[a], assignments[b]);
             if (cmp != 0) return cmp;
             // For inner product, higher is better (reverse); for L2, lower is better

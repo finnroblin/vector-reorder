@@ -53,6 +53,8 @@ echo "Backed up to: $BACKUP_DIR"
 
 # Run reorder tool
 cd /Users/finnrobl/Documents/k-NN-2/vector-reorder
+
+
 ./gradlew reorder \
   -PvecFile="$VEC_FILE" \
   -PoutputFaiss="${FAISS_FILE%.faiss}_reordered.faiss" \
@@ -460,3 +462,45 @@ Mean recall@1,prod-queries,0.89,
 
 So we can see that the recall is much lower in this case. 
 (running with k=1000 centroids).
+
+
+
+/Users/finnrobl/Documents/k-NN-2/vector-reorder/bp_files
+
+
+
+What we need to do next is call into the bp reorder. 
+./gradlew bpReorder -PvecFile=<path> -PoutputFaiss=<path> -PoutputVec=<path>
+
+INDEX_DIR="/Users/finnrobl/Documents/k-NN-2/e2e_data/nodes/0/indices/6rmnxTydThuknJeeqW6nEw/0/index"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/Users/finnrobl/Documents/k-NN-2/file-backups/${TIMESTAMP}-backups"
+FAISS_FILE=$(ls "$INDEX_DIR"/*.faiss 2>/dev/null | head -1)
+VEC_FILE=$(ls "$INDEX_DIR"/*_NativeEngines990KnnVectorsFormat_0.vec 2>/dev/null | head -1)
+
+# Create backup directory and backup originals
+mkdir -p "$BACKUP_DIR"
+cp "$FAISS_FILE" "$BACKUP_DIR/"
+cp "$VEC_FILE" "$BACKUP_DIR/"
+echo "Backed up to: $BACKUP_DIR"
+
+# Run reorder tool
+cd /Users/finnrobl/Documents/k-NN-2/vector-reorder
+./gradlew bpReorder \
+  -PvecFile="$VEC_FILE" \
+  -PoutputFaiss="${FAISS_FILE%.faiss}_reordered.faiss" \
+  -PoutputVec="${VEC_FILE%.vec}_reordered.vec"
+# Swap files
+mv "$FAISS_FILE" "${FAISS_FILE}.old"
+mv "${FAISS_FILE%.faiss}_reordered.faiss" "$FAISS_FILE"
+mv "$VEC_FILE" "${VEC_FILE}.old"
+mv "${VEC_FILE%.vec}_reordered.vec" "$VEC_FILE"
+
+# Clean up .old files (OpenSearch will delete them anyway)
+rm -f "${FAISS_FILE}.old" "${VEC_FILE}.old"
+
+echo ""
+echo "=== DONE ==="
+echo "Backups at: $BACKUP_DIR"
+echo ""
+echo "Now kill and restart cluster."
