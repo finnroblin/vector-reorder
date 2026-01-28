@@ -18,45 +18,52 @@ public class FaissIndexRebuilder {
     public static final String SPACE_INNER_PRODUCT = "innerproduct";
 
     /**
-     * Build a new FAISS index with vectors in the specified order.
+     * Build a new FAISS index with vectors in the specified order, composing with existing ID mapping.
      *
-     * @param vectors    all vectors (in original order)
-     * @param newOrder   newOrder[newIdx] = oldIdx - the insertion order  
-     * @param dim        vector dimension
-     * @param outputPath path for output .faiss file
-     * @param m          HNSW M parameter (neighbors per node)
+     * @param vectors      all vectors (in original order)
+     * @param newOrder     newOrder[newIdx] = oldIdx - the reordering permutation
+     * @param oldIdMapping oldIdMapping[oldIdx] = docID - from original FAISS file
+     * @param dim          vector dimension
+     * @param outputPath   path for output .faiss file
+     * @param m            HNSW M parameter (neighbors per node)
      * @param efConstruction ef_construction parameter
-     * @param spaceType  "l2" or "innerproduct"
+     * @param efSearch     ef_search parameter (stored in index for search)
+     * @param spaceType    "l2" or "innerproduct"
      */
     public static void rebuild(
         float[][] vectors,
         int[] newOrder,
+        long[] oldIdMapping,
         int dim,
         String outputPath,
         int m,
         int efConstruction,
+        int efSearch,
         String spaceType
     ) throws IOException {
         int n = vectors.length;
         
-        // Reorder vectors in Java: reordered[newIdx] = vectors[newOrder[newIdx]]
+        // Reorder vectors: reordered[newIdx] = vectors[oldIdx]
         float[][] reordered = new float[n][];
         for (int newIdx = 0; newIdx < n; newIdx++) {
             reordered[newIdx] = vectors[newOrder[newIdx]];
+        }
+        
+        // Compose ID mapping: newIdMapping[newIdx] = oldIdMapping[oldIdx] = docID
+        int[] newIdMapping = new int[n];
+        for (int newIdx = 0; newIdx < n; newIdx++) {
+            int oldIdx = newOrder[newIdx];
+            newIdMapping[newIdx] = (int) oldIdMapping[oldIdx];
         }
         
         // Transfer reordered vectors to native memory
         long vectorsAddr = FaissKMeansService.storeVectors(reordered);
         
         try {
-            // Build index description (e.g., "HNSW16,Flat")
             String indexDescription = "HNSW" + m + ",Flat";
-            
-            // Build and write FAISS index via JNI
-            // newOrder array becomes the ID mapping: idMapping[internalId] = luceneDocId
             FaissIndexService.buildAndWriteIndex(
-                vectorsAddr, n, dim, newOrder,
-                indexDescription, spaceType, efConstruction,
+                vectorsAddr, n, dim, newIdMapping,
+                indexDescription, spaceType, efConstruction, efSearch,
                 outputPath
             );
         } finally {
@@ -65,9 +72,30 @@ public class FaissIndexRebuilder {
     }
 
     /**
+     * Build a new FAISS index without existing ID mapping (uses ordinal as docID).
+     */
+    public static void rebuild(
+        float[][] vectors,
+        int[] newOrder,
+        int dim,
+        String outputPath,
+        int m,
+        int efConstruction,
+        int efSearch,
+        String spaceType
+    ) throws IOException {
+        // Create identity mapping: oldIdMapping[i] = i
+        long[] identityMapping = new long[vectors.length];
+        for (int i = 0; i < identityMapping.length; i++) {
+            identityMapping[i] = newOrder[i];  // For backwards compat: use newOrder as ID mapping
+        }
+        rebuild(vectors, newOrder, identityMapping, dim, outputPath, m, efConstruction, efSearch, spaceType);
+    }
+
+    /**
      * Convenience method using default HNSW parameters.
      */
     public static void rebuild(float[][] vectors, int[] newOrder, int dim, String outputPath) throws IOException {
-        rebuild(vectors, newOrder, dim, outputPath, 16, 100, SPACE_L2);
+        rebuild(vectors, newOrder, dim, outputPath, 16, 100, 100, SPACE_L2);
     }
 }

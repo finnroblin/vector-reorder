@@ -65,6 +65,13 @@ tasks.register('testBpReorder', JavaExec) {
     workingDir = projectDir
 }
 
+tasks.register('verifyIdMapping', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.VerifyIdMapping'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
 // Utility tasks
 tasks.register('parseFaiss', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
@@ -98,13 +105,14 @@ tasks.register('runE2E', JavaExec) {
     ]
 }
 
-// BP reorder tool - usage: ./gradlew bpReorder -PvecFile=<path> -PoutputFaiss=<path> -PoutputVec=<path>
+// BP reorder tool - usage: ./gradlew bpReorder -PvecFile=<path> -PinputFaiss=<path> -PoutputFaiss=<path> -PoutputVec=<path>
 tasks.register('bpReorder', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.BpReorderTool'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
     args = [
         project.findProperty('vecFile') ?: '',
+        project.findProperty('inputFaiss') ?: '',
         project.findProperty('outputFaiss') ?: '',
         project.findProperty('outputVec') ?: ''
     ]
@@ -120,7 +128,62 @@ tasks.register('bpReorderRaw', JavaExec) {
     }
     args = [
         "${projectDir}/raw_test_files/_z_NativeEngines990KnnVectorsFormat_0.vec",
+        "${projectDir}/raw_test_files/_z_165_train.faiss",
         "${projectDir}/bp_files/_z_165_train.faiss",
         "${projectDir}/bp_files/_z_NativeEngines990KnnVectorsFormat_0.vec"
     ]
+}
+
+
+// Verify reorder correctness
+tasks.register('verifyReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.VerifyReorder'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    workingDir = projectDir
+}
+
+
+// Query FAISS index verification
+tasks.register('queryFaiss', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.QueryFaissIndex'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    workingDir = projectDir
+}
+
+
+// Parse .vemf metadata file
+tasks.register('parseVemf', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.ParseVemf'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    args = project.hasProperty('vemfFile') ? [project.vemfFile] : []
+    workingDir = projectDir
+}
+
+
+// Check ID mapping
+tasks.register('checkIdMapping', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.CheckIdMapping'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+
+// Check pre-BP FAISS ID mapping
+tasks.register('checkPreBP', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.CheckPreBP'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+
+tasks.register('debugMapping', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.DebugMapping'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
 }

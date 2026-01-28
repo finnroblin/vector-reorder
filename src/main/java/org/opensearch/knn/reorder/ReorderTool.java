@@ -49,7 +49,7 @@ public class ReorderTool {
         // Build FAISS index
         System.out.println("Building FAISS index...");
         start = System.currentTimeMillis();
-        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaissPath, 16, 100, FaissIndexRebuilder.SPACE_L2);
+        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaissPath, 16, 100, 100, FaissIndexRebuilder.SPACE_L2);
         System.out.println("Index build took " + (System.currentTimeMillis() - start) + " ms");
         
         // Write reordered .vec file

@@ -75,7 +75,7 @@ public class E2EReorderScript {
         
         System.out.println("Building FAISS index...");
         start = System.currentTimeMillis();
-        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaiss, 16, 100, FaissIndexRebuilder.SPACE_L2);
+        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaiss, 16, 100, 100, FaissIndexRebuilder.SPACE_L2);
         System.out.println("Index build took " + (System.currentTimeMillis() - start) + " ms");
         
         // Write reordered .vec file

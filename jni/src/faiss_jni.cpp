@@ -80,7 +80,7 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissKMeansService_freeVe
 JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteIndex(
     JNIEnv* env, jclass cls,
     jlong vectorsAddress, jint numVectors, jint dimension, jintArray idsJ,
-    jstring indexDescriptionJ, jstring spaceTypeJ, jint efConstruction, jstring outputPathJ)
+    jstring indexDescriptionJ, jstring spaceTypeJ, jint efConstruction, jint efSearch, jstring outputPathJ)
 {
     float* vectors = reinterpret_cast<float*>(vectorsAddress);
     
@@ -110,5 +110,5 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAn
     }
     
     faiss_core::buildAndWriteIndex(vectors, numVectors, dimension, ids,
-                                    indexDesc, metric, efConstruction, outputPath);
+                                    indexDesc, metric, efConstruction, efSearch, outputPath);
 }

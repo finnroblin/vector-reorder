@@ -64,12 +64,14 @@ public class FaissFilePermuter {
         public int[] cumNeighborsPerLevel;
         public int maxLevel;
         public int entryPoint;
+        public int efConstruction;
+        public int efSearch;
 
         @Override
         public String toString() {
             return String.format(
-                "FaissStructure{type=%s, hnsw=%s, flat=%s, dim=%d, n=%d, maxLevel=%d, entry=%d}",
-                indexType, hnswType, flatType, dimension, numVectors, maxLevel, entryPoint
+                "FaissStructure{type=%s, hnsw=%s, flat=%s, dim=%d, n=%d, maxLevel=%d, entry=%d, efC=%d, efS=%d}",
+                indexType, hnswType, flatType, dimension, numVectors, maxLevel, entryPoint, efConstruction, efSearch
             );
         }
     }
@@ -157,8 +159,8 @@ public class FaissFilePermuter {
             // HNSW params: entryPoint(4) + maxLevel(4) + efConstruction(4) + efSearch(4) + dummy(4)
             s.entryPoint = input.readInt();
             s.maxLevel = input.readInt();
-            input.readInt(); // efConstruction
-            input.readInt(); // efSearch
+            s.efConstruction = input.readInt();
+            s.efSearch = input.readInt();
             input.readInt(); // dummy
 
             // Flat vectors section
@@ -358,6 +360,15 @@ public class FaissFilePermuter {
             }
             return mapping;
         }
+    }
+
+    /**
+     * Read HNSW parameters from a FAISS file.
+     * @return int[2] where [0]=efConstruction, [1]=efSearch
+     */
+    public static int[] readHnswParams(String faissPath) throws IOException {
+        FaissStructure s = parseStructure(faissPath);
+        return new int[] { s.efConstruction, s.efSearch };
     }
 
     public static void main(String[] args) throws IOException {

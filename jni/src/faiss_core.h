@@ -32,7 +32,7 @@ KMeansResult kmeansWithDistances(float* vectors, int numVectors, int dimension,
 void buildAndWriteIndex(float* vectors, int numVectors, int dimension,
                         const std::vector<int64_t>& ids,
                         const std::string& indexDescription,
-                        MetricType metric, int efConstruction,
+                        MetricType metric, int efConstruction, int efSearch,
                         const std::string& outputPath);
 
 } // namespace faiss_core

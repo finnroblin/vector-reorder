@@ -83,7 +83,7 @@ void test_build_and_write_index() {
     std::string path = "/tmp/test_core_index.faiss";
     
     faiss_core::buildAndWriteIndex(vectors.data(), n, d, ids,
-                                    "HNSW16,Flat", faiss_core::L2, 40, path);
+                                    "HNSW16,Flat", faiss_core::L2, 40, 40, path);
     
     // Verify by loading
     faiss::Index* loaded = faiss::read_index(path.c_str());

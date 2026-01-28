@@ -59,7 +59,7 @@ KMeansResult kmeansWithDistances(float* vectors, int numVectors, int dimension,
 void buildAndWriteIndex(float* vectors, int numVectors, int dimension,
                         const std::vector<int64_t>& ids,
                         const std::string& indexDescription,
-                        MetricType metric, int efConstruction,
+                        MetricType metric, int efConstruction, int efSearch,
                         const std::string& outputPath) {
     faiss::MetricType faissMetric = (metric == INNER_PRODUCT) 
         ? faiss::METRIC_INNER_PRODUCT : faiss::METRIC_L2;
@@ -68,6 +68,7 @@ void buildAndWriteIndex(float* vectors, int numVectors, int dimension,
     
     if (auto* hnswIndex = dynamic_cast<faiss::IndexHNSW*>(index)) {
         hnswIndex->hnsw.efConstruction = efConstruction;
+        hnswIndex->hnsw.efSearch = efSearch;
     }
     
     std::vector<faiss::idx_t> faissIds(ids.begin(), ids.end());

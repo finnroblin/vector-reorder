@@ -504,3 +504,11 @@ echo "=== DONE ==="
 echo "Backups at: $BACKUP_DIR"
 echo ""
 echo "Now kill and restart cluster."
+
+
+
+# Updates Jan 28
+
+We have made the changes to get a float32 case to work with reordering.
+
+We need to make it work for float

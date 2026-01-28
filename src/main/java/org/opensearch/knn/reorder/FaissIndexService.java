@@ -23,11 +23,6 @@ public class FaissIndexService {
     /**
      * Build a FAISS HNSW index from vectors and write to file.
      * 
-     * Equivalent to:
-     *   indexAddr = JNIService.initIndex(n, dim, params, FAISS)
-     *   JNIService.insertToIndex(ids, vectorsAddr, dim, params, indexAddr, FAISS)
-     *   JNIService.writeIndex(output, indexAddr, FAISS, params)
-     *
      * @param vectorsAddress pointer to native memory where vectors are stored (n * dim floats, in insertion order)
      * @param numVectors number of vectors
      * @param dimension dimension of each vector
@@ -35,6 +30,7 @@ public class FaissIndexService {
      * @param indexDescription FAISS index description (e.g., "HNSW16,Flat")
      * @param spaceType "l2" or "innerproduct" 
      * @param efConstruction ef_construction parameter for HNSW graph building
+     * @param efSearch ef_search parameter for HNSW search (stored in index)
      * @param outputPath path to write the .faiss file
      */
     public static native void buildAndWriteIndex(
@@ -45,6 +41,7 @@ public class FaissIndexService {
         String indexDescription,
         String spaceType,
         int efConstruction,
+        int efSearch,
         String outputPath
     );
 }

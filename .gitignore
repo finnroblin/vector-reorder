@@ -16,3 +16,15 @@ jni/build/
 jni/release/
 jni/cmake/*.cmake-e
 jni/.idea
+
+jni/Makefile
+raw_test_files/
+bp_files/
+
+bin/
+.vscode
+
+jni/CMakeCache.txt
+jni/CMakeFiles/
+jni/cmake_install.cmake
+jni/faiss_test

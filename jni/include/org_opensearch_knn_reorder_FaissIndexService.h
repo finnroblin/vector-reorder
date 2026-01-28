@@ -10,10 +10,10 @@ extern "C" {
 /*
  * Class:     org_opensearch_knn_reorder_FaissIndexService
  * Method:    buildAndWriteIndex
- * Signature: (JII[ILjava/lang/String;Ljava/lang/String;ILjava/lang/String;)V
+ * Signature: (JII[ILjava/lang/String;Ljava/lang/String;IILjava/lang/String;)V
  */
 JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteIndex
-  (JNIEnv *, jclass, jlong, jint, jint, jintArray, jstring, jstring, jint, jstring);
+  (JNIEnv *, jclass, jlong, jint, jint, jintArray, jstring, jstring, jint, jint, jstring);
 
 #ifdef __cplusplus
 }
