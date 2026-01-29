@@ -6,38 +6,41 @@
 package org.opensearch.knn.reorder;
 
 import org.apache.lucene.codecs.CodecUtil;
-import org.apache.lucene.codecs.lucene90.IndexedDISI;
-import org.apache.lucene.index.DocsWithFieldSet;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.util.packed.DirectMonotonicWriter;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * Utility class for reading and writing .vemf metadata files.
+ * Handles .vemf file reading and rewriting after BP reordering.
  * 
- * The .vemf file contains metadata about vectors including the ordToDoc mapping.
- * After BP reordering, we need to update this mapping so that:
- * - newOrdToDoc[newOrd] = oldDocId where oldDocId = oldOrd (in dense case)
+ * PROBLEM: After BP reorder, ordToDoc[ord] = docId is NOT monotonic.
+ * Lucene's DirectMonotonicWriter requires monotonic values.
  * 
- * This converts a dense mapping (ordinal == docId) to a sparse mapping
- * with explicit ordToDoc entries.
+ * SOLUTION: Write .vemf in dense format (ordToDoc is identity).
+ * Store the actual docToOrd mapping in a separate .vord file.
+ * 
+ * .vord format:
+ *   - Header (CodecUtil)
+ *   - int count
+ *   - int[count] docToOrd mapping
+ *   - Footer (CodecUtil)
+ * 
+ * To look up vector for docId: ord = docToOrd[docId], then read vector at ord.
  */
 public class VemfFileIO {
 
     private static final String META_CODEC_NAME = "Lucene99FlatVectorsFormatMeta";
-    private static final String VECTOR_DATA_CODEC_NAME = "Lucene99FlatVectorsFormatData";
-    private static final int DIRECT_MONOTONIC_BLOCK_SHIFT = 16;
+    private static final String VORD_CODEC_NAME = "OpenSearchVectorOrdMapping";
+    private static final int CODEC_MAGIC = 0x3fd76c17;
 
-    /**
-     * Metadata parsed from .vemf file header.
-     */
     public record VemfMeta(
+        byte[] segmentId,
+        String segmentSuffix,
         int fieldNumber,
         int vectorEncoding,
         int similarityFunction,
@@ -53,18 +56,37 @@ public class VemfFileIO {
         boolean isEmpty
     ) {}
 
-    /**
-     * Read metadata from .vemf file.
-     */
+    private static int readBEInt(IndexInput in) throws IOException {
+        return ((in.readByte() & 0xFF) << 24)
+            | ((in.readByte() & 0xFF) << 16)
+            | ((in.readByte() & 0xFF) << 8)
+            | (in.readByte() & 0xFF);
+    }
+
     public static VemfMeta readMetadata(String vemfPath) throws IOException {
         Path path = Paths.get(vemfPath);
         try (FSDirectory directory = FSDirectory.open(path.getParent());
              IndexInput input = directory.openInput(path.getFileName().toString(), IOContext.DEFAULT)) {
             
-            // Skip codec header
-            CodecUtil.checkIndexHeader(input, META_CODEC_NAME, 0, 0, new byte[16], "");
+            int magic = readBEInt(input);
+            if (magic != CODEC_MAGIC) {
+                throw new IOException("Invalid codec magic: " + Integer.toHexString(magic));
+            }
             
-            // Read field info
+            String codecName = input.readString();
+            if (!META_CODEC_NAME.equals(codecName)) {
+                throw new IOException("Expected codec " + META_CODEC_NAME + ", got " + codecName);
+            }
+            
+            int version = readBEInt(input);
+            byte[] segmentId = new byte[16];
+            input.readBytes(segmentId, 0, 16);
+            
+            int suffixLen = input.readByte() & 0xFF;
+            byte[] suffixBytes = new byte[suffixLen];
+            input.readBytes(suffixBytes, 0, suffixLen);
+            String segmentSuffix = new String(suffixBytes);
+            
             int fieldNumber = input.readInt();
             int vectorEncoding = input.readInt();
             int similarityFunction = input.readInt();
@@ -73,7 +95,6 @@ public class VemfFileIO {
             int dimension = input.readVInt();
             int size = input.readInt();
             
-            // Read ordToDoc configuration
             long docsWithFieldOffset = input.readLong();
             long docsWithFieldLength = input.readLong();
             short jumpTableEntryCount = input.readShort();
@@ -83,6 +104,7 @@ public class VemfFileIO {
             boolean isDense = docsWithFieldOffset == -1;
             
             return new VemfMeta(
+                segmentId, segmentSuffix,
                 fieldNumber, vectorEncoding, similarityFunction,
                 vectorDataOffset, vectorDataLength, dimension, size,
                 docsWithFieldOffset, docsWithFieldLength,
@@ -93,22 +115,13 @@ public class VemfFileIO {
     }
 
     /**
-     * Rewrite .vemf and append ordToDoc mapping to .vec file after BP reordering.
+     * Rewrite .vemf and create .vord after BP reordering.
      * 
-     * For dense case (all docs have vectors), after reordering:
-     * - Vector at new ordinal i came from old ordinal newOrder[i]
-     * - Old ordinal == old docId (dense case)
-     * - So newOrdToDoc[i] = newOrder[i]
-     * 
-     * @param srcVemfPath source .vemf file path
-     * @param srcVecPath source .vec file path  
-     * @param dstVemfPath destination .vemf file path
-     * @param dstVecPath destination .vec file path (ordToDoc appended here)
-     * @param newOrder permutation array: newOrder[newIdx] = oldIdx
+     * .vemf is written in dense format (ord == docId assumption).
+     * .vord contains the actual docToOrd mapping for correct lookups.
      */
     public static void writeReordered(
         String srcVemfPath,
-        String srcVecPath,
         String dstVemfPath,
         String dstVecPath,
         int[] newOrder
@@ -119,135 +132,106 @@ public class VemfFileIO {
             throw new IllegalArgumentException("Cannot reorder empty vector field");
         }
         
-        Path srcVemf = Paths.get(srcVemfPath);
         Path dstVemf = Paths.get(dstVemfPath);
-        Path dstVec = Paths.get(dstVecPath);
+        String vordPath = dstVemfPath.replace(".vemf", ".vord");
+        Path dstVord = Paths.get(vordPath);
         
-        // Build the new ordToDoc mapping
-        // newOrdToDoc[newOrd] = docId that the vector at newOrd belongs to
-        // In dense case: oldOrd == oldDocId, so newOrdToDoc[newOrd] = newOrder[newOrd]
-        int[] newOrdToDoc = new int[srcMeta.size()];
-        for (int newOrd = 0; newOrd < srcMeta.size(); newOrd++) {
-            int oldOrd = newOrder[newOrd];
-            // In dense case, oldOrd == oldDocId
-            // In sparse case, we'd need to read the original ordToDoc mapping
-            newOrdToDoc[newOrd] = oldOrd;
+        // Compute docToOrd mapping
+        // After reorder: vector at newOrd came from oldOrd = newOrder[newOrd]
+        // In dense case: oldOrd == docId
+        // So: ordToDoc[newOrd] = newOrder[newOrd]
+        // Inverse: docToOrd[docId] = newOrd where newOrder[newOrd] == docId
+        int count = newOrder.length;
+        int[] docToOrd = new int[count];
+        for (int newOrd = 0; newOrd < count; newOrd++) {
+            int docId = newOrder[newOrd];
+            docToOrd[docId] = newOrd;
         }
         
-        // Sort to get docIds in ascending order for DocsWithFieldSet
-        // We need to track which newOrd maps to which docId
-        int[] sortedDocIds = newOrdToDoc.clone();
-        java.util.Arrays.sort(sortedDocIds);
-        
-        try (FSDirectory dstVemfDir = FSDirectory.open(dstVemf.getParent());
-             FSDirectory dstVecDir = FSDirectory.open(dstVec.getParent());
-             IndexOutput metaOut = dstVemfDir.createOutput(dstVemf.getFileName().toString(), IOContext.DEFAULT);
-             IndexOutput vecOut = dstVecDir.openChecksumOutput(dstVec.getFileName().toString())) {
-            
-            // First, copy the vector data from source (already reordered by VecFileIO)
-            // We need to append the ordToDoc mapping after the vector data
-            Path srcVec = Paths.get(srcVecPath);
-            try (FSDirectory srcVecDir = FSDirectory.open(srcVec.getParent());
-                 IndexInput srcVecIn = srcVecDir.openInput(srcVec.getFileName().toString(), IOContext.DEFAULT)) {
-                // Copy everything from source vec file
-                vecOut.copyBytes(srcVecIn, srcVecIn.length());
+        try (FSDirectory dir = FSDirectory.open(dstVemf.getParent())) {
+            // Write .vemf in dense format
+            try (IndexOutput metaOut = dir.createOutput(dstVemf.getFileName().toString(), IOContext.DEFAULT)) {
+                CodecUtil.writeIndexHeader(metaOut, META_CODEC_NAME, 0, srcMeta.segmentId(), srcMeta.segmentSuffix());
+                
+                metaOut.writeInt(srcMeta.fieldNumber());
+                metaOut.writeInt(srcMeta.vectorEncoding());
+                metaOut.writeInt(srcMeta.similarityFunction());
+                metaOut.writeVLong(srcMeta.vectorDataOffset());
+                // Recalculate data length based on count
+                long newDataLength = (long) count * srcMeta.dimension() * Float.BYTES;
+                metaOut.writeVLong(newDataLength);
+                metaOut.writeVInt(srcMeta.dimension());
+                metaOut.writeInt(count);
+                
+                // Dense format
+                metaOut.writeLong(-1L);  // docsWithFieldOffset = -1 means dense
+                metaOut.writeLong(0L);
+                metaOut.writeShort((short) -1);
+                metaOut.writeByte((byte) -1);
+                
+                metaOut.writeInt(-1);  // end marker
+                CodecUtil.writeFooter(metaOut);
             }
             
-            // Write .vemf header
-            CodecUtil.writeIndexHeader(metaOut, META_CODEC_NAME, 0, new byte[16], "");
-            
-            // Write field metadata (same as source)
-            metaOut.writeInt(srcMeta.fieldNumber());
-            metaOut.writeInt(srcMeta.vectorEncoding());
-            metaOut.writeInt(srcMeta.similarityFunction());
-            metaOut.writeVLong(srcMeta.vectorDataOffset());
-            metaOut.writeVLong(srcMeta.vectorDataLength());
-            metaOut.writeVInt(srcMeta.dimension());
-            metaOut.writeInt(srcMeta.size());
-            
-            // Now write the sparse ordToDoc configuration
-            // Even if original was dense, after reordering we need sparse mapping
-            writeOrdToDocMapping(metaOut, vecOut, newOrdToDoc, srcMeta.size());
-            
-            // Write end marker and footer
-            metaOut.writeInt(-1);
-            CodecUtil.writeFooter(metaOut);
-            CodecUtil.writeFooter(vecOut);
+            // Write .vord with docToOrd mapping
+            try (IndexOutput vordOut = dir.createOutput(dstVord.getFileName().toString(), IOContext.DEFAULT)) {
+                CodecUtil.writeIndexHeader(vordOut, VORD_CODEC_NAME, 0, srcMeta.segmentId(), srcMeta.segmentSuffix());
+                
+                vordOut.writeInt(docToOrd.length);
+                for (int ord : docToOrd) {
+                    vordOut.writeInt(ord);
+                }
+                
+                CodecUtil.writeFooter(vordOut);
+            }
         }
+        
+        System.out.println("Wrote .vemf (dense format) and .vord (docToOrd mapping)");
+        System.out.println("  .vord: " + vordPath);
     }
 
     /**
-     * Write ordToDoc mapping in sparse format.
+     * Read docToOrd mapping from .vord file.
      */
-    private static void writeOrdToDocMapping(
-        IndexOutput metaOut,
-        IndexOutput vecOut,
-        int[] ordToDoc,
-        int count
-    ) throws IOException {
-        // Build DocsWithFieldSet from ordToDoc
-        DocsWithFieldSet docsWithField = new DocsWithFieldSet();
-        
-        // We need docIds in sorted order for DocsWithFieldSet
-        // Create pairs of (docId, ord) and sort by docId
-        int[][] pairs = new int[count][2];
-        for (int ord = 0; ord < count; ord++) {
-            pairs[ord][0] = ordToDoc[ord]; // docId
-            pairs[ord][1] = ord;
+    public static int[] readDocToOrd(String vordPath) throws IOException {
+        Path path = Paths.get(vordPath);
+        try (FSDirectory dir = FSDirectory.open(path.getParent());
+             IndexInput input = dir.openInput(path.getFileName().toString(), IOContext.DEFAULT)) {
+            
+            // Skip header manually (magic + codec name + version + segmentId + suffix)
+            int magic = readBEInt(input);
+            if (magic != CODEC_MAGIC) {
+                throw new IOException("Invalid magic in .vord");
+            }
+            String codec = input.readString();
+            if (!VORD_CODEC_NAME.equals(codec)) {
+                throw new IOException("Expected codec " + VORD_CODEC_NAME);
+            }
+            readBEInt(input); // version
+            input.skipBytes(16); // segmentId
+            int suffixLen = input.readByte() & 0xFF;
+            input.skipBytes(suffixLen);
+            
+            int count = input.readInt();
+            int[] docToOrd = new int[count];
+            for (int i = 0; i < count; i++) {
+                docToOrd[i] = input.readInt();
+            }
+            
+            return docToOrd;
         }
-        java.util.Arrays.sort(pairs, (a, b) -> Integer.compare(a[0], b[0]));
-        
-        // Add docIds in sorted order
-        for (int i = 0; i < count; i++) {
-            docsWithField.add(pairs[i][0]);
-        }
-        
-        // Write docsWithField (IndexedDISI format)
-        long docsWithFieldOffset = vecOut.getFilePointer();
-        short jumpTableEntryCount = IndexedDISI.writeBitSet(
-            docsWithField.iterator(), vecOut, IndexedDISI.DEFAULT_DENSE_RANK_POWER);
-        long docsWithFieldLength = vecOut.getFilePointer() - docsWithFieldOffset;
-        
-        // Write ordToDoc mapping using DirectMonotonicWriter
-        long ordToDocOffset = vecOut.getFilePointer();
-        DirectMonotonicWriter ordToDocWriter = DirectMonotonicWriter.getInstance(
-            metaOut, vecOut, count, DIRECT_MONOTONIC_BLOCK_SHIFT);
-        
-        // Write docIds in ordinal order (not sorted order)
-        for (int ord = 0; ord < count; ord++) {
-            ordToDocWriter.add(ordToDoc[ord]);
-        }
-        ordToDocWriter.finish();
-        long ordToDocLength = vecOut.getFilePointer() - ordToDocOffset;
-        
-        // Write metadata
-        metaOut.writeLong(docsWithFieldOffset);
-        metaOut.writeLong(docsWithFieldLength);
-        metaOut.writeShort(jumpTableEntryCount);
-        metaOut.writeByte(IndexedDISI.DEFAULT_DENSE_RANK_POWER);
-        metaOut.writeLong(ordToDocOffset);
-        metaOut.writeVInt(DIRECT_MONOTONIC_BLOCK_SHIFT);
-        metaOut.writeLong(ordToDocLength);
     }
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
             System.out.println("Usage: VemfFileIO <vemf-path>");
-            System.out.println("  Dumps .vemf metadata");
             return;
         }
         
         VemfMeta meta = readMetadata(args[0]);
         System.out.println("VemfMeta:");
-        System.out.println("  fieldNumber: " + meta.fieldNumber());
-        System.out.println("  vectorEncoding: " + meta.vectorEncoding());
-        System.out.println("  similarityFunction: " + meta.similarityFunction());
-        System.out.println("  vectorDataOffset: " + meta.vectorDataOffset());
-        System.out.println("  vectorDataLength: " + meta.vectorDataLength());
         System.out.println("  dimension: " + meta.dimension());
         System.out.println("  size: " + meta.size());
-        System.out.println("  docsWithFieldOffset: " + meta.docsWithFieldOffset());
         System.out.println("  isDense: " + meta.isDense());
-        System.out.println("  isEmpty: " + meta.isEmpty());
     }
 }

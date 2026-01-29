@@ -76,7 +76,7 @@ public class BpReordererTest {
         String outputFaiss = TEST_FILES_DIR + "/bp_reordered_test.faiss";
         System.out.println("\nBuilding FAISS index to: " + outputFaiss);
         start = System.currentTimeMillis();
-        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaiss, 16, 100, FaissIndexRebuilder.SPACE_L2);
+        FaissIndexRebuilder.rebuild(vectors, newOrder, dim, outputFaiss, 16, 100, 100, FaissIndexRebuilder.SPACE_L2);
         System.out.println("FAISS index build took " + (System.currentTimeMillis() - start) + " ms");
 
         // Verify file was created

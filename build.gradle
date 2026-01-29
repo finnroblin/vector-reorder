@@ -187,3 +187,12 @@ tasks.register('debugMapping', JavaExec) {
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
     workingDir = projectDir
 }
+
+
+// Test VemfFileIO
+tasks.register('testVemf', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.VemfFileIOTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}

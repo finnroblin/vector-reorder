@@ -8,11 +8,22 @@ package org.opensearch.knn.reorder;
 import java.io.File;
 
 /**
- * CLI tool: BP reorder vectors and produce reordered .faiss, .vec, and .vemf files.
+ * CLI tool: BP reorder vectors and produce reordered .faiss, .vec, .vemf, and .vord files.
  * 
  * Usage: BpReorderTool <vec-file-path> <input-faiss-path> <output-faiss-path> <output-vec-path> [output-vemf-path]
  * 
- * If output-vemf-path is not provided, it defaults to output-vec-path with .vemf extension.
+ * Output files:
+ *   .faiss - HNSW index with vectors in BP order, ID mapping: faissId -> docId
+ *   .vec   - Vectors in BP order
+ *   .vemf  - Lucene metadata (dense format, ord==docId assumption - INCORRECT after reorder)
+ *   .vord  - docToOrd mapping for correct exact search lookups
+ * 
+ * After reorder, to look up vector for a docId:
+ *   1. Read docToOrd from .vord
+ *   2. ord = docToOrd[docId]
+ *   3. Read vector at position ord from .vec
+ * 
+ * For ANN search, use FAISS directly - it has correct ID mapping.
  */
 public class BpReorderTool {
 
@@ -78,21 +89,27 @@ public class BpReorderTool {
         // Write reordered .vemf file
         System.out.println("Writing reordered .vemf file...");
         start = System.currentTimeMillis();
-        VemfFileIO.writeReordered(inputVemfPath, vecPath, outputVemfPath, outputVecPath, newOrder);
+        VemfFileIO.writeReordered(inputVemfPath, outputVemfPath, outputVecPath, newOrder);
         System.out.println("Vemf file write took " + (System.currentTimeMillis() - start) + " ms");
         
         // Verify
         File faissFile = new File(outputFaissPath);
         File vecFile = new File(outputVecPath);
         File vemfFile = new File(outputVemfPath);
+        File vordFile = new File(outputVemfPath.replace(".vemf", ".vord"));
         System.out.println();
-        if (faissFile.exists() && vecFile.exists() && vemfFile.exists()) {
+        if (faissFile.exists() && vecFile.exists() && vemfFile.exists() && vordFile.exists()) {
             System.out.println("SUCCESS!");
             System.out.println("  .faiss: " + outputFaissPath + " (" + faissFile.length() + " bytes)");
             System.out.println("  .vec:   " + outputVecPath + " (" + vecFile.length() + " bytes)");
             System.out.println("  .vemf:  " + outputVemfPath + " (" + vemfFile.length() + " bytes)");
+            System.out.println("  .vord:  " + vordFile.getPath() + " (" + vordFile.length() + " bytes)");
             FaissFilePermuter.FaissStructure s = FaissFilePermuter.parseStructure(outputFaissPath);
             System.out.println("  Structure: " + s);
+            System.out.println();
+            System.out.println("NOTE: .vemf is in dense format (ord==docId assumption).");
+            System.out.println("      .vord contains the actual docToOrd mapping for correct lookups.");
+            System.out.println("      For exact search, use: ord = docToOrd[docId], then read vector at ord.");
         } else {
             System.err.println("FAILED: Output files not created");
             System.exit(1);

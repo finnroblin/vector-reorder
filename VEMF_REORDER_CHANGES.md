@@ -1,112 +1,95 @@
-# Changes Needed for .vemf File Reordering
+# VEMF Reorder Changes
 
-## Problem Summary
+## Problem
 
-From `SortingCodec.md`: BpReorderTool currently updates `.vec` and `.faiss` but **not** `.vemf`. This breaks exact search because the `ordToDoc` mapping in `.vemf` no longer matches the reordered vectors.
+After BP reordering, vectors in `.vec` are in a different order than docIds. The `.vemf` file contains an `ordToDoc` mapping that tells the reader which docId owns each vector ordinal.
 
-## .vemf File Structure
+In the original (dense) case:
+- `ordToDoc[ord] = ord` (identity mapping)
+- Vector at position `ord` belongs to `docId = ord`
 
-Based on `ParseVemf.java` and Lucene99FlatVectorsFormat:
+After BP reorder with permutation `newOrder`:
+- Vector at position `newOrd` came from `oldOrd = newOrder[newOrd]`
+- In dense case: `oldOrd == docId`
+- So: `ordToDoc[newOrd] = newOrder[newOrd]`
+
+## The Monotonicity Problem
+
+Lucene stores `ordToDoc` using `DirectMonotonicWriter`, which requires values to be monotonically increasing. This works because Lucene writes vectors in docId order, so `ordToDoc[0] < ordToDoc[1] < ...`.
+
+After BP reorder, `ordToDoc` values are a permutation of `[0, 1, ..., n-1]`, which is NOT monotonic (unless it's the identity permutation).
+
+**There is no way to store a non-monotonic mapping with DirectMonotonicWriter.**
+
+## How Lucene Handles This (SortingCodecReader)
+
+During merge with `BPReorderingMergePolicy`, Lucene uses `SortingCodecReader` to reorder the ENTIRE segment:
+1. All fields (inverted index, stored fields, vectors) get new docIds
+2. Vectors are written in NEW docId order
+3. After merge, `ordToDoc` is identity again (dense)
+
+This works because the entire segment is rewritten consistently.
+
+## Our Hotswap Approach
+
+For experimentation, we want to hotswap segment files without rebuilding the entire segment. This means:
+- Inverted index keeps OLD docIds
+- Vectors are in BP order (different from docId order)
+- We need a mapping to translate docId -> vector position
+
+### Solution: Separate .vord File
+
+We create a new `.vord` file containing `docToOrd` mapping:
+- `docToOrd[docId] = ord` (position in reordered `.vec`)
+- This is the inverse of `ordToDoc`
+
+The `.vemf` file is written in dense format (claiming `ord == docId`), which is technically incorrect but structurally valid.
+
+### Output Files After Reorder
+
+| File | Contents | Notes |
+|------|----------|-------|
+| `.faiss` | HNSW index with BP-ordered vectors | ID mapping: faissId -> docId (correct) |
+| `.vec` | Vectors in BP order | Position `ord` has vector from `docId = newOrder[ord]` |
+| `.vemf` | Lucene metadata (dense format) | Claims `ord == docId` (INCORRECT) |
+| `.vord` | `docToOrd` mapping | `docToOrd[docId] = ord` (CORRECT) |
+
+### Usage After Reorder
+
+**For ANN search:** Use FAISS directly. It has the correct ID mapping.
+
+**For exact search (if needed):**
+1. Load `docToOrd` from `.vord`
+2. Given `docId`, compute `ord = docToOrd[docId]`
+3. Read vector at position `ord` from `.vec`
+
+### Limitations
+
+- The `.vemf` file is not usable by standard Lucene readers for exact search
+- A custom reader would be needed to use the `.vord` mapping
+- This is intended for experimentation, not production use
+
+## Alternative Approaches Considered
+
+1. **Store ordToDoc as plain int array** - Wastes space, requires custom reader
+2. **Store docToOrd with DirectMonotonic** - Values are still non-monotonic
+3. **Full segment rewrite** - Correct but defeats hotswap purpose
+4. **Use FAISS for all vector access** - Viable but changes read path significantly
+
+## File Format: .vord
 
 ```
-.vemf file:
-├── Codec Header (magic + codec name + version + object id)
-├── Field Name Header
-├── fieldNumber (int32)
-├── vectorEncoding (int32)
-├── similarityFunction (int32)
-├── vectorDataOffset (vlong)
-├── vectorDataLength (vlong)
-├── dimension (vint)
-├── size (int32)
-├── OrdToDoc Configuration:
-│   ├── docsWithFieldOffset (long)  -- -2=empty, -1=dense, >=0=sparse
-│   ├── docsWithFieldLength (long)
-│   ├── jumpTableEntryCount (short)
-│   └── denseRankPower (byte)
-│   [If sparse:]
-│   ├── ordToDocOffset (long)
-│   ├── blockShift (vint)
-│   ├── DirectMonotonicReader.Meta
-│   └── ordToDocLength (long)
-├── End marker (int32 = -1)
-└── Codec Footer
+Header:
+  - Magic (4 bytes, big-endian): 0x3fd76c17
+  - Codec name (string): "OpenSearchVectorOrdMapping"
+  - Version (4 bytes, big-endian): 0
+  - Segment ID (16 bytes)
+  - Suffix length (1 byte) + suffix bytes
+
+Data:
+  - Count (4 bytes, int)
+  - docToOrd array (count * 4 bytes, int[])
+
+Footer:
+  - Lucene checksum footer
 ```
-
-## OrdToDoc Modes
-
-The `docsWithFieldOffset` field indicates the mapping type:
-- `-2`: EMPTY (no vectors)
-- `-1`: DENSE (ordinal == docID, identity mapping)
-- `>= 0`: SPARSE (explicit ordToDoc mapping stored in .vec file)
-
-## Implementation
-
-### Files Modified
-
-1. **VemfFileIO.java** (NEW): Handles .vemf file reading and rewriting
-   - `readMetadata()`: Parse .vemf header
-   - `writeReordered()`: Rewrite .vemf with new ordToDoc mapping
-
-2. **BpReorderTool.java**: Updated to also rewrite .vemf
-   - Added optional 5th argument for output .vemf path
-   - Calls `VemfFileIO.writeReordered()` after writing .vec
-
-### Key Logic
-
-After BP reordering with permutation `newOrder[newIdx] = oldIdx`:
-
-1. **Vector at new ordinal `i`** came from old ordinal `newOrder[i]`
-2. **In dense case**: old ordinal == old docId
-3. **Therefore**: `newOrdToDoc[i] = newOrder[i]`
-
-The reordered .vemf converts from dense to sparse format because:
-- Original: ordinal == docId (identity)
-- After reorder: ordinal != docId (need explicit mapping)
-
-### Data Flow
-
-```
-Original (Dense):
-  ord 0 → docId 0 → vector A
-  ord 1 → docId 1 → vector B
-  ord 2 → docId 2 → vector C
-
-After BP Reorder (newOrder = [2, 0, 1]):
-  new ord 0 → vector C (from old ord 2) → docId 2
-  new ord 1 → vector A (from old ord 0) → docId 0
-  new ord 2 → vector B (from old ord 1) → docId 1
-
-New ordToDoc mapping (Sparse):
-  newOrdToDoc[0] = 2
-  newOrdToDoc[1] = 0
-  newOrdToDoc[2] = 1
-```
-
-## Usage
-
-```bash
-# Old usage (missing .vemf):
-BpReorderTool <vec-path> <input-faiss> <output-faiss> <output-vec>
-
-# New usage (includes .vemf):
-BpReorderTool <vec-path> <input-faiss> <output-faiss> <output-vec> [output-vemf]
-
-# If output-vemf not provided, defaults to output-vec with .vemf extension
-```
-
-## Files Updated
-
-| File | Contains | Update |
-|------|----------|--------|
-| `.vec` | Raw vectors | ✅ Reorder vectors |
-| `.vemf` | ordToDoc mapping | ✅ **NEW: Convert dense→sparse** |
-| `.faiss` | HNSW graph + ID mapping | ✅ Rebuild with new ID mapping |
-
-## Verification
-
-After reordering, exact search should work correctly:
-1. Query requests docId X
-2. .vemf ordToDoc mapping finds ordinal for docId X
-3. .vec file returns vector at that ordinal
-4. Vector matches what FAISS returns for docId X
