@@ -88,6 +88,11 @@ public class BpReorderTool {
 
     public static void bpReorder(List<String> vecFiles, List<String> faissFiles,
                                   String spaceType, int efSearch, int efConstruction, int m) throws Exception {
+        if (!faissFiles.isEmpty() && faissFiles.size() != vecFiles.size()) {
+            throw new IllegalArgumentException("Number of .faiss files (" + faissFiles.size() + 
+                ") must match number of .vec files (" + vecFiles.size() + ")");
+        }
+
         System.out.println("=== BP Vector Reorder Tool ===");
         System.out.println("Vec files: " + vecFiles);
         System.out.println("FAISS files: " + (faissFiles.isEmpty() ? "(none - skipping FAISS rebuild)" : faissFiles));
@@ -95,58 +100,50 @@ public class BpReorderTool {
                           ", ef_construction=" + efConstruction + ", m=" + m);
         System.out.println();
 
-        // Load all vectors from all .vec files
-        List<float[]> allVectors = new ArrayList<>();
-        for (String vecFile : vecFiles) {
-            System.out.println("Loading vectors from: " + vecFile);
+        // Process each vec/faiss pair independently
+        for (int i = 0; i < vecFiles.size(); i++) {
+            String vecFile = vecFiles.get(i);
+            String faissFile = faissFiles.isEmpty() ? null : faissFiles.get(i);
+
+            System.out.println("Processing: " + vecFile);
             float[][] vectors = VecFileIO.loadVectors(vecFile);
-            for (float[] v : vectors) allVectors.add(v);
-        }
+            int n = vectors.length;
+            int dim = vectors[0].length;
+            System.out.println("  Loaded " + n + " vectors (dim=" + dim + ")");
 
-        int n = allVectors.size();
-        int dim = allVectors.get(0).length;
-        float[][] vectorArray = allVectors.toArray(new float[0][]);
-        System.out.println("Total vectors loaded: " + n + " (dim=" + dim + ")");
+            // Compute BP reordering
+            System.out.println("  Computing BP reordering...");
+            long start = System.currentTimeMillis();
+            int[] newOrder = BpReorderer.computePermutation(vectors);
+            System.out.println("  BP reordering took " + (System.currentTimeMillis() - start) + " ms");
 
-        // Compute BP reordering
-        System.out.println("Computing BP reordering...");
-        long start = System.currentTimeMillis();
-        int[] newOrder = BpReorderer.computePermutation(vectorArray);
-        System.out.println("BP reordering took " + (System.currentTimeMillis() - start) + " ms");
+            // Reorder .vec file
+            String outputVec = vecFile.replace(".vec", "_reordered.vec");
+            System.out.println("  Writing: " + outputVec);
+            VecFileIO.writeReordered(vecFile, outputVec, newOrder);
 
-        // Rebuild FAISS indices (only if --faiss was specified)
-        if (!faissFiles.isEmpty()) {
-            for (String faissFile : faissFiles) {
-                String outputPath = faissFile.replace(".faiss", "_reordered.faiss");
-                System.out.println("Rebuilding FAISS index: " + faissFile + " -> " + outputPath);
-                
-                // Read original ID mapping
+            // Rebuild FAISS if specified
+            if (faissFile != null) {
+                String outputFaiss = faissFile.replace(".faiss", "_reordered.faiss");
+                System.out.println("  Rebuilding: " + outputFaiss);
                 long[] oldIdMapping = FaissFilePermuter.readIdMapping(faissFile);
-                
-                FaissIndexRebuilder.rebuild(vectorArray, newOrder, oldIdMapping, dim, outputPath, 
+                FaissIndexRebuilder.rebuild(vectors, newOrder, oldIdMapping, dim, outputFaiss, 
                                             m, efConstruction, efSearch, spaceType);
             }
-        }
-
-        // Reorder .vec files
-        for (String vecFile : vecFiles) {
-            String outputPath = vecFile.replace(".vec", "_reordered.vec");
-            System.out.println("Reordering .vec file: " + vecFile + " -> " + outputPath);
-            VecFileIO.writeReordered(vecFile, outputPath, newOrder);
 
             // Also reorder .vemf if present
             String vemfPath = vecFile.replace(".vec", ".vemf");
             if (new File(vemfPath).exists()) {
-                String outputVemfPath = outputPath.replace(".vec", ".vemf");
-                System.out.println("Reordering .vemf file: " + vemfPath + " -> " + outputVemfPath);
-                VemfFileIO.writeReordered(vemfPath, outputVemfPath, outputPath, newOrder);
+                String outputVemfPath = outputVec.replace(".vec", ".vemf");
+                System.out.println("  Reordering .vemf: " + outputVemfPath);
+                VemfFileIO.writeReordered(vemfPath, outputVemfPath, outputVec, newOrder);
             }
 
             // Copy .osknnqstate if present
             String qstatePath = vecFile.replace(".vec", ".osknnqstate");
             if (new File(qstatePath).exists()) {
-                String outputQstatePath = outputPath.replace(".vec", ".osknnqstate");
-                System.out.println("Copying .osknnqstate: " + qstatePath + " -> " + outputQstatePath);
+                String outputQstatePath = outputVec.replace(".vec", ".osknnqstate");
+                System.out.println("  Copying .osknnqstate: " + outputQstatePath);
                 Files.copy(Path.of(qstatePath), Path.of(outputQstatePath), StandardCopyOption.REPLACE_EXISTING);
             }
         }
