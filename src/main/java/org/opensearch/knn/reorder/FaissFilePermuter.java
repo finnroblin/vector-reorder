@@ -28,9 +28,11 @@ import java.nio.file.Paths;
 public class FaissFilePermuter {
 
     // FAISS index type markers (4 bytes each)
-    private static final String IXMP = "IxMp";  // ID map wrapper
+    private static final String IXMP = "IxMp";  // ID map wrapper (float)
+    private static final String IBMP = "IBMp";  // ID map wrapper (binary)
     private static final String IHNF = "IHNf";  // HNSW flat float
     private static final String IHNS = "IHNs";  // HNSW scalar quantized
+    private static final String IBHF = "IBHf";  // HNSW binary flat
     private static final String IXF2 = "IxF2";  // Flat L2
     private static final String IXFI = "IxFI";  // Flat inner product
 
@@ -56,9 +58,10 @@ public class FaissFilePermuter {
         public long fileEnd;             // End of file
 
         // Metadata
+        public boolean isBinary;         // True if binary index (IBMp)
         public String indexType;         // IxMp, IHNf, etc.
         public String hnswType;          // IHNf or IHNs
-        public String flatType;          // IxF2 or IxFI
+        public String flatType;          // IxF2 or IxFI or IBxF
         public int dimension;
         public int numVectors;
         public int[] cumNeighborsPerLevel;
@@ -74,6 +77,20 @@ public class FaissFilePermuter {
                 indexType, hnswType, flatType, dimension, numVectors, maxLevel, entryPoint, efConstruction, efSearch
             );
         }
+    }
+
+    // FAISS uses little-endian format
+    private static int readIntLE(IndexInput input) throws IOException {
+        byte[] b = new byte[4];
+        input.readBytes(b, 0, 4);
+        return (b[0] & 0xFF) | ((b[1] & 0xFF) << 8) | ((b[2] & 0xFF) << 16) | ((b[3] & 0xFF) << 24);
+    }
+
+    private static long readLongLE(IndexInput input) throws IOException {
+        byte[] b = new byte[8];
+        input.readBytes(b, 0, 8);
+        return (b[0] & 0xFFL) | ((b[1] & 0xFFL) << 8) | ((b[2] & 0xFFL) << 16) | ((b[3] & 0xFFL) << 24)
+             | ((b[4] & 0xFFL) << 32) | ((b[5] & 0xFFL) << 40) | ((b[6] & 0xFFL) << 48) | ((b[7] & 0xFFL) << 56);
     }
 
     /**
@@ -94,44 +111,65 @@ public class FaissFilePermuter {
             // Read top-level index type (4 bytes)
             s.indexType = readIndexType(input);
             
-            if (!IXMP.equals(s.indexType)) {
-                throw new IOException("Expected IxMp, got: " + s.indexType);
+            if (!IXMP.equals(s.indexType) && !IBMP.equals(s.indexType)) {
+                throw new IOException("Expected IxMp or IBMp, got: " + s.indexType);
             }
+            
+            s.isBinary = IBMP.equals(s.indexType);
 
-            // IxMp common header: dimension(4) + ntotal(8) + dummy(8) + dummy(8) + is_trained(1) + metric(4)
-            s.dimension = input.readInt();
-            s.numVectors = Math.toIntExact(input.readLong());
-            input.readLong(); // dummy
-            input.readLong(); // dummy
-            input.readByte(); // is_trained
-            input.readInt();  // metric_type
+            if (s.isBinary) {
+                // IBMp header: dimension(4) + code_size(4) + ntotal(8) + is_trained(1) + metric(4)
+                s.dimension = readIntLE(input);
+                readIntLE(input); // code_size (int, not long)
+                s.numVectors = Math.toIntExact(readLongLE(input));
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
+            } else {
+                // IxMp header: dimension(4) + ntotal(8) + dummy(8) + dummy(8) + is_trained(1) + metric(4)
+                s.dimension = readIntLE(input);
+                s.numVectors = Math.toIntExact(readLongLE(input));
+                readLongLE(input); // dummy
+                readLongLE(input); // dummy
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
+            }
             s.headerEnd = input.getFilePointer();
 
             // Read nested HNSW index
             s.hnswStart = input.getFilePointer();
             s.hnswType = readIndexType(input);
             
-            if (!IHNF.equals(s.hnswType) && !IHNS.equals(s.hnswType)) {
-                throw new IOException("Expected IHNf/IHNs, got: " + s.hnswType);
+            if (!IHNF.equals(s.hnswType) && !IHNS.equals(s.hnswType) && !IBHF.equals(s.hnswType)) {
+                throw new IOException("Expected IHNf/IHNs/IBHf, got: " + s.hnswType);
             }
 
-            // HNSW common header
-            input.readInt();  // dimension
-            input.readLong(); // ntotal
-            input.readLong(); // dummy
-            input.readLong(); // dummy
-            input.readByte(); // is_trained
-            input.readInt();  // metric_type
+            // HNSW common header (same for float and binary)
+            if (IBHF.equals(s.hnswType)) {
+                // Binary HNSW: dimension(4) + code_size(4) + ntotal(8) + is_trained(1) + metric(4)
+                readIntLE(input);  // dimension
+                readIntLE(input);  // code_size (int, not long)
+                readLongLE(input); // ntotal
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
+            } else {
+                // Float HNSW: dimension(4) + ntotal(8) + dummy(8) + dummy(8) + is_trained(1) + metric(4)
+                readIntLE(input);  // dimension
+                readLongLE(input); // ntotal
+                readLongLE(input); // dummy
+                readLongLE(input); // dummy
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
+            }
             s.hnswHeaderEnd = input.getFilePointer();
 
             // HNSW graph structure
             // assignProbas (double array)
-            long assignProbasSize = input.readLong();
+            long assignProbasSize = readLongLE(input);
             input.skipBytes(assignProbasSize * Double.BYTES);
             s.assignProbasEnd = input.getFilePointer();
 
             // cumulative neighbors per level (int array)
-            long cumNeighborsSize = input.readLong();
+            long cumNeighborsSize = readLongLE(input);
             s.cumNeighborsPerLevel = new int[(int) cumNeighborsSize];
             if (cumNeighborsSize > 0) {
                 input.readInts(s.cumNeighborsPerLevel, 0, (int) cumNeighborsSize);
@@ -140,44 +178,57 @@ public class FaissFilePermuter {
 
             // levels section (int per vector)
             s.levelsStart = input.getFilePointer();
-            long levelsSize = input.readLong();
+            long levelsSize = readLongLE(input);
             input.skipBytes(levelsSize * Integer.BYTES);
             s.levelsEnd = input.getFilePointer();
 
             // offsets (long array - raw longs, NOT DirectMonotonic in file)
             s.offsetsStart = input.getFilePointer();
-            long offsetsCount = input.readLong();
+            long offsetsCount = readLongLE(input);
             input.skipBytes(offsetsCount * Long.BYTES);
             s.offsetsEnd = input.getFilePointer();
 
             // neighbors section (int array)
             s.neighborsStart = input.getFilePointer();
-            long neighborsSize = input.readLong();
+            long neighborsSize = readLongLE(input);
             input.skipBytes(neighborsSize * Integer.BYTES);
             s.neighborsEnd = input.getFilePointer();
 
             // HNSW params: entryPoint(4) + maxLevel(4) + efConstruction(4) + efSearch(4) + dummy(4)
-            s.entryPoint = input.readInt();
-            s.maxLevel = input.readInt();
-            s.efConstruction = input.readInt();
-            s.efSearch = input.readInt();
-            input.readInt(); // dummy
+            s.entryPoint = readIntLE(input);
+            s.maxLevel = readIntLE(input);
+            s.efConstruction = readIntLE(input);
+            s.efSearch = readIntLE(input);
+            readIntLE(input); // dummy
 
             // Flat vectors section
             s.flatVectorsStart = input.getFilePointer();
             s.flatType = readIndexType(input);
             
-            // Flat common header
-            input.readInt();  // dimension
-            input.readLong(); // ntotal
-            input.readLong(); // dummy
-            input.readLong(); // dummy
-            input.readByte(); // is_trained
-            input.readInt();  // metric_type
+            if (s.isBinary) {
+                // IBxF (IndexBinaryFlat): dimension(4) + code_size(4) + ntotal(8) + is_trained(1) + metric(4)
+                readIntLE(input);  // dimension
+                int codeSize = readIntLE(input);  // code_size
+                readLongLE(input); // ntotal
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
 
-            // Flat vector data
-            long vectorDataSize = input.readLong();
-            input.skipBytes(vectorDataSize * Float.BYTES);
+                // Binary vector data: size(8) + data
+                long vectorDataSize = readLongLE(input);
+                input.skipBytes(vectorDataSize);  // Already in bytes
+            } else {
+                // IxF2/IxFI (IndexFlat): dimension(4) + ntotal(8) + dummy(8) + dummy(8) + is_trained(1) + metric(4)
+                readIntLE(input);  // dimension
+                readLongLE(input); // ntotal
+                readLongLE(input); // dummy
+                readLongLE(input); // dummy
+                input.readByte(); // is_trained
+                readIntLE(input);  // metric_type
+
+                // Float vector data
+                long vectorDataSize = readLongLE(input);
+                input.skipBytes(vectorDataSize * Float.BYTES);
+            }
             s.flatVectorsEnd = input.getFilePointer();
 
             // ID mapping (long array in IxMp)
@@ -241,7 +292,7 @@ public class FaissFilePermuter {
     private static void permuteLevels(IndexInput input, IndexOutput output, FaissStructure s, int[] newOrder) 
             throws IOException {
         input.seek(s.levelsStart);
-        long count = input.readLong();
+        long count = readLongLE(input);
         output.writeLong(count);
 
         // Read all levels
@@ -257,12 +308,12 @@ public class FaissFilePermuter {
     private static void remapNeighbors(IndexInput input, IndexOutput output, FaissStructure s, int[] inverse) 
             throws IOException {
         input.seek(s.neighborsStart);
-        long count = input.readLong();
+        long count = readLongLE(input);
         output.writeLong(count);
 
         // Read, remap, and write each neighbor ID
         for (long i = 0; i < count; i++) {
-            int neighborId = input.readInt();
+            int neighborId = readIntLE(input);
             if (neighborId >= 0 && neighborId < inverse.length) {
                 output.writeInt(inverse[neighborId]);
             } else {
@@ -281,7 +332,7 @@ public class FaissFilePermuter {
         output.writeBytes(header, header.length);
 
         // Read vector count and data
-        long vectorCount = input.readLong();
+        long vectorCount = readLongLE(input);
         output.writeLong(vectorCount);
 
         int bytesPerVector = s.dimension * Float.BYTES;
@@ -302,13 +353,13 @@ public class FaissFilePermuter {
     private static void permuteIdMapping(IndexInput input, IndexOutput output, FaissStructure s, int[] newOrder) 
             throws IOException {
         input.seek(s.idMappingStart);
-        long count = input.readLong();
+        long count = readLongLE(input);
         output.writeLong(count);
 
         // Read all mappings
         long[] mapping = new long[(int) count];
         for (int i = 0; i < count; i++) {
-            mapping[i] = input.readLong();
+            mapping[i] = readLongLE(input);
         }
 
         // Write in new order (the mapping values stay the same, just reordered)
@@ -353,10 +404,10 @@ public class FaissFilePermuter {
              IndexInput input = directory.openInput(path.getFileName().toString(), IOContext.DEFAULT)) {
             
             input.seek(s.idMappingStart);
-            long count = input.readLong();
+            long count = readLongLE(input);
             long[] mapping = new long[(int) count];
             for (int i = 0; i < count; i++) {
-                mapping[i] = input.readLong();
+                mapping[i] = readLongLE(input);
             }
             return mapping;
         }

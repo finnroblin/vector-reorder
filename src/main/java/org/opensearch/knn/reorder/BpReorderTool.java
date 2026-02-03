@@ -5,7 +5,12 @@
 
 package org.opensearch.knn.reorder;
 
+import org.apache.lucene.store.FSDirectory;
+
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 /**
  * CLI tool: BP reorder vectors and produce reordered .faiss, .vec, .vemf, and .vord files.
@@ -17,6 +22,11 @@ import java.io.File;
  *   .vec   - Vectors in BP order
  *   .vemf  - Lucene metadata (dense format, ord==docId assumption - INCORRECT after reorder)
  *   .vord  - docToOrd mapping for correct exact search lookups
+ *   .osknnqstate - Quantization state (copied unchanged if present)
+ * 
+ * For quantized indexes (.osknnqstate present):
+ *   - Reads quantization state and applies 1-bit scalar quantization
+ *   - Builds IndexBinaryHNSW instead of IndexHNSWFlat
  * 
  * After reorder, to look up vector for a docId:
  *   1. Read docToOrd from .vord
@@ -39,6 +49,8 @@ public class BpReorderTool {
         String outputVecPath = args[3];
         String outputVemfPath = args.length > 4 ? args[4] : outputVecPath.replace(".vec", ".vemf");
         String inputVemfPath = vecPath.replace(".vec", ".vemf");
+        String inputQstatePath = vecPath.replace(".vec", ".osknnqstate");
+        String outputQstatePath = outputVecPath.replace(".vec", ".osknnqstate");
         
         System.out.println("=== BP Vector Reorder Tool ===");
         System.out.println("Input .vec:    " + vecPath);
@@ -47,6 +59,15 @@ public class BpReorderTool {
         System.out.println("Output .faiss: " + outputFaissPath);
         System.out.println("Output .vec:   " + outputVecPath);
         System.out.println("Output .vemf:  " + outputVemfPath);
+        
+        // Check for quantization state
+        File qstateFile = new File(inputQstatePath);
+        boolean isQuantized = qstateFile.exists();
+        if (isQuantized) {
+            System.out.println("Quantization: ENABLED (.osknnqstate found)");
+        } else {
+            System.out.println("Quantization: DISABLED (no .osknnqstate)");
+        }
         System.out.println();
         
         // Load vectors
@@ -74,10 +95,21 @@ public class BpReorderTool {
         int[] newOrder = BpReorderer.computePermutation(vectors);
         System.out.println("BP reordering took " + (System.currentTimeMillis() - start) + " ms");
         
-        // Build FAISS index with composed ID mapping
+        // Build FAISS index
         System.out.println("Building FAISS index...");
         start = System.currentTimeMillis();
-        FaissIndexRebuilder.rebuild(vectors, newOrder, oldIdMapping, dim, outputFaissPath, 16, efConstruction, efSearch, FaissIndexRebuilder.SPACE_L2);
+        
+        if (isQuantized) {
+            // Read quantization state and build binary index
+            QuantizationStateIO.OneBitState qstate = readQuantizationState(inputQstatePath, dim);
+            System.out.println("  Quantization: 1-bit scalar, " + qstate.getBytesPerVector() + " bytes/vector");
+            BinaryFaissIndexRebuilder.rebuild(vectors, newOrder, oldIdMapping, qstate, 
+                                              outputFaissPath, 16, efConstruction, efSearch);
+        } else {
+            // Build standard float index
+            FaissIndexRebuilder.rebuild(vectors, newOrder, oldIdMapping, dim, outputFaissPath, 
+                                        16, efConstruction, efSearch, FaissIndexRebuilder.SPACE_L2);
+        }
         System.out.println("Index build took " + (System.currentTimeMillis() - start) + " ms");
         
         // Write reordered .vec file
@@ -92,11 +124,19 @@ public class BpReorderTool {
         VemfFileIO.writeReordered(inputVemfPath, outputVemfPath, outputVecPath, newOrder);
         System.out.println("Vemf file write took " + (System.currentTimeMillis() - start) + " ms");
         
+        // Copy .osknnqstate if present (quantization state doesn't change with reordering)
+        if (isQuantized) {
+            System.out.println("Copying .osknnqstate file...");
+            Files.copy(Path.of(inputQstatePath), Path.of(outputQstatePath), StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("Copied quantization state");
+        }
+        
         // Verify
         File faissFile = new File(outputFaissPath);
         File vecFile = new File(outputVecPath);
         File vemfFile = new File(outputVemfPath);
         File vordFile = new File(outputVemfPath.replace(".vemf", ".vord"));
+        File outQstateFile = new File(outputQstatePath);
         System.out.println();
         if (faissFile.exists() && vecFile.exists() && vemfFile.exists() && vordFile.exists()) {
             System.out.println("SUCCESS!");
@@ -104,6 +144,9 @@ public class BpReorderTool {
             System.out.println("  .vec:   " + outputVecPath + " (" + vecFile.length() + " bytes)");
             System.out.println("  .vemf:  " + outputVemfPath + " (" + vemfFile.length() + " bytes)");
             System.out.println("  .vord:  " + vordFile.getPath() + " (" + vordFile.length() + " bytes)");
+            if (outQstateFile.exists()) {
+                System.out.println("  .osknnqstate: " + outputQstatePath + " (" + outQstateFile.length() + " bytes)");
+            }
             FaissFilePermuter.FaissStructure s = FaissFilePermuter.parseStructure(outputFaissPath);
             System.out.println("  Structure: " + s);
             System.out.println();
@@ -113,6 +156,28 @@ public class BpReorderTool {
         } else {
             System.err.println("FAILED: Output files not created");
             System.exit(1);
+        }
+    }
+
+    private static QuantizationStateIO.OneBitState readQuantizationState(String qstatePath, int expectedDim) throws Exception {
+        // Parse the .osknnqstate file path to extract segment info
+        // Format: <dir>/<segment>_<suffix>.osknnqstate
+        Path path = Path.of(qstatePath);
+        String fileName = path.getFileName().toString();
+        String baseName = fileName.replace(".osknnqstate", "");
+        
+        // Find the segment name and suffix
+        int lastUnderscore = baseName.lastIndexOf('_');
+        if (lastUnderscore == -1) {
+            throw new IllegalArgumentException("Invalid .osknnqstate filename: " + fileName);
+        }
+        String segmentName = baseName.substring(0, lastUnderscore);
+        String segmentSuffix = baseName.substring(lastUnderscore + 1);
+        
+        // For now, assume field number 0 (first vector field)
+        // TODO: Support multiple vector fields by reading from .fnm
+        try (FSDirectory dir = FSDirectory.open(path.getParent())) {
+            return QuantizationStateIO.readOneBitState(dir, segmentName, segmentSuffix, 0);
         }
     }
 }

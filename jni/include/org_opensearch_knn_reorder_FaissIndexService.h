@@ -15,6 +15,14 @@ extern "C" {
 JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteIndex
   (JNIEnv *, jclass, jlong, jint, jint, jintArray, jstring, jstring, jint, jint, jstring);
 
+/*
+ * Class:     org_opensearch_knn_reorder_FaissIndexService
+ * Method:    buildAndWriteBinaryIndex
+ * Signature: ([BII[IIIILjava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteBinaryIndex
+  (JNIEnv *, jclass, jbyteArray, jint, jint, jintArray, jint, jint, jint, jstring);
+
 #ifdef __cplusplus
 }
 #endif

@@ -18,6 +18,16 @@ repositories {
 dependencies {
     implementation 'org.apache.lucene:lucene-core:10.3.2'
     implementation 'org.apache.lucene:lucene-misc:10.3.2'
+    implementation 'org.apache.lucene:lucene-codecs:10.3.2'
+    
+    // OpenSearch core for StreamInput/StreamOutput (quantization state deserialization)
+    implementation 'org.opensearch:opensearch:3.4.0'
+    
+    // Guava for k-NN
+    implementation 'com.google.guava:guava:33.0.0-jre'
+    
+    // k-NN codec and dependencies for reading indexes created with KNN codec
+    implementation fileTree(dir: 'libs', include: '*.jar')
 }
 
 application {
@@ -195,4 +205,82 @@ tasks.register('testVemf', JavaExec) {
     mainClass = 'org.opensearch.knn.reorder.VemfFileIOTest'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
     workingDir = projectDir
+}
+
+
+// BP segment reorder - usage: ./gradlew bpSegmentReorder -PindexPath=<path> -PvectorField=<field> -PoutputPath=<path> [-PfaissPath=<path>] [-PqstatePath=<path>] [-Pthreads=N]
+tasks.register('bpSegmentReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.BpSegmentReorderer'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    doFirst {
+        def argList = [
+            project.findProperty('indexPath') ?: '',
+            project.findProperty('vectorField') ?: '',
+            project.findProperty('outputPath') ?: ''
+        ]
+        if (project.hasProperty('faissPath')) {
+            argList += ['--faiss', project.faissPath]
+        }
+        if (project.hasProperty('qstatePath')) {
+            argList += ['--qstate', project.qstatePath]
+        }
+        argList += ['--threads', project.findProperty('threads') ?: Runtime.getRuntime().availableProcessors().toString()]
+        args = argList.findAll { it != '' }
+    }
+}
+
+
+// Test QuantizationStateIO
+tasks.register('testQuantization', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.QuantizationStateIOTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+
+// E2E BP reorder - usage: ./gradlew e2eBpReorder -PsegmentDir=<path> -PvectorField=<field> -PoutputDir=<path> [-Pthreads=N]
+tasks.register('e2eBpReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.E2EBpReorder'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    args = [
+        project.findProperty('segmentDir') ?: '',
+        project.findProperty('vectorField') ?: '',
+        project.findProperty('outputDir') ?: '',
+        project.findProperty('threads') ?: Runtime.getRuntime().availableProcessors().toString()
+    ].findAll { it != '' }
+}
+
+
+// Test BpSegmentReorderer
+tasks.register('testBpSegmentReorder', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.BpSegmentReordererTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx2g"]
+    workingDir = projectDir
+}
+
+
+// Test VectorReorder multi-file clustering
+tasks.register('testKmeansReorder', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.VectorReorderTest'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release"]
+    workingDir = projectDir
+}
+
+
+// Sorting BP reorder using SortingCodecReader
+// Usage: ./gradlew sortingBpReorder -PsrcDir=<path> -PdstDir=<path> -PvectorField=<field>
+tasks.register('sortingBpReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.SortingBpReorder'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    args = [
+        project.findProperty('srcDir') ?: '',
+        project.findProperty('dstDir') ?: '',
+        project.findProperty('vectorField') ?: ''
+    ]
 }

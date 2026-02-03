@@ -8,6 +8,8 @@
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIDMap.h>
+#include <faiss/IndexBinaryFlat.h>
+#include <faiss/IndexBinaryHNSW.h>
 #include <faiss/index_factory.h>
 #include <faiss/index_io.h>
 
@@ -78,6 +80,24 @@ void buildAndWriteIndex(float* vectors, int numVectors, int dimension,
     idMap.add_with_ids(numVectors, vectors, faissIds.data());
     
     faiss::write_index(&idMap, outputPath.c_str());
+}
+
+void buildAndWriteBinaryIndex(uint8_t* vectors, int numVectors, int dimension,
+                              const std::vector<int64_t>& ids,
+                              int hnswM, int efConstruction, int efSearch,
+                              const std::string& outputPath) {
+    // dimension is in bits for binary index
+    faiss::IndexBinaryHNSW* index = new faiss::IndexBinaryHNSW(dimension, hnswM);
+    index->hnsw.efConstruction = efConstruction;
+    index->hnsw.efSearch = efSearch;
+    
+    std::vector<faiss::idx_t> faissIds(ids.begin(), ids.end());
+    
+    faiss::IndexBinaryIDMap idMap(index);
+    idMap.own_fields = true;
+    idMap.add_with_ids(numVectors, vectors, faissIds.data());
+    
+    faiss::write_index_binary(&idMap, outputPath.c_str());
 }
 
 } // namespace faiss_core

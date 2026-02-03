@@ -35,4 +35,10 @@ void buildAndWriteIndex(float* vectors, int numVectors, int dimension,
                         MetricType metric, int efConstruction, int efSearch,
                         const std::string& outputPath);
 
+// Build binary HNSW index and write to file
+void buildAndWriteBinaryIndex(uint8_t* vectors, int numVectors, int dimension,
+                              const std::vector<int64_t>& ids,
+                              int hnswM, int efConstruction, int efSearch,
+                              const std::string& outputPath);
+
 } // namespace faiss_core

@@ -11,7 +11,7 @@ vector-reorder/
 │   ├── include/
 │   │   └── org_opensearch_knn_reorder_FaissKMeansService.h
 │   ├── src/
-│   │   └── faiss_kmeans.cpp    # JNI implementation
+│   │   └── faiss_jni.cpp       # JNI implementation
 │   └── release/
 │       └── libvectorreorder_faiss.dylib
 └── src/main/java/org/opensearch/knn/reorder/
@@ -39,19 +39,47 @@ Output: `jni/release/libvectorreorder_faiss.dylib`
 
 ## Usage
 
-### Cluster and sort vectors (with distance-based secondary sort)
+### Cluster command with multiple files and HNSW parameters
 ```bash
-./gradlew run --args="<path-to-vec-file> cluster"
+./gradlew run --args="cluster --vec <file1.vec> [--vec <file2.vec> ...] [--faiss <file1.faiss> ...] \
+    [--space <l2|innerproduct>] [--ef-search <n>] [--ef-construction <n>] [--m <n>]"
 ```
 
-### Example with test file
+### Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--vec` | Path to .vec file (can specify multiple) | Required |
+| `--faiss` | Path to .faiss file (can specify multiple) | None |
+| `--space` | Space type: `l2` or `innerproduct` | `l2` |
+| `--ef-search` | ef_search parameter for FAISS HNSW | 100 |
+| `--ef-construction` | ef_construction parameter for FAISS HNSW | 100 |
+| `--m` | M parameter for FAISS HNSW | 16 |
+
+### Examples
+
+Single .vec file (legacy):
 ```bash
-./gradlew run --args="/Users/finnrobl/Documents/k-NN-2/k-NN/build/testclusters/integTest-0/data/nodes/0/indices/jpOu4-eOSwqTqlGLtHSGGQ/0/index/_z_NativeEngines990KnnVectorsFormat_0.vec cluster"
+./gradlew run --args="cluster --vec /path/to/vectors.vec"
+```
+
+Multiple .vec files with inner product:
+```bash
+./gradlew run --args="cluster --vec /path/to/file1.vec --vec /path/to/file2.vec --space innerproduct"
+```
+
+With FAISS files and custom HNSW parameters:
+```bash
+./gradlew run --args="cluster --vec /path/to/vectors.vec --faiss /path/to/index.faiss \
+    --space l2 --ef-search 200 --ef-construction 128 --m 32"
 ```
 
 ### Example output (1M vectors, k=100, 1 iteration)
 ```
-Loading 1000000 vectors...
+Loading vectors from: /path/to/file1.vec
+Loading vectors from: /path/to/file2.vec
+Total vectors loaded: 1000000 (dim=128)
+FAISS files: [/path/to/index.faiss]
+Parameters: space=l2, ef_search=200, ef_construction=128, m=32
 Vector 100000 BEFORE sort: [16.0000, 4.0000, 0.0000, 17.0000, ..., 0.0000, 2.0000, 19.0000, 25.0000]
 Running k-means with k=100, metric=l2...
 Vector 100000 AFTER sort: [0.0000, 0.0000, 0.0000, 0.0000, ..., 5.0000, 6.0000, 0.0000, 4.0000]
@@ -63,6 +91,15 @@ First 5 vectors in cluster 0 (should be sorted by distance):
   idx=983897, distance=36643.656
   idx=804511, distance=38360.438
   idx=998943, distance=39238.688
+```
+
+### Other commands
+```bash
+# Print first 10 vectors
+./gradlew run --args="print <path-to-vec-file>"
+
+# Load and print every 100,000th vector
+./gradlew run --args="load <path-to-vec-file>"
 ```
 
 ### Run tests

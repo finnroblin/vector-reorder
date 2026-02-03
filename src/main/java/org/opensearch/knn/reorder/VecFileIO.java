@@ -106,4 +106,35 @@ public class VecFileIO {
             out.writeBytes(footer, footer.length);
         }
     }
+
+    /**
+     * Write vectors from array to a new .vec file in reordered order.
+     */
+    public static void writeReorderedFromArray(float[][] vectors, int[] newOrder, String dstPath) throws IOException {
+        Path dst = Paths.get(dstPath);
+        int n = vectors.length;
+        int dim = vectors[0].length;
+
+        try (FSDirectory dstDir = FSDirectory.open(dst.getParent());
+             IndexOutput out = dstDir.createOutput(dst.getFileName().toString(), IOContext.DEFAULT)) {
+
+            // Write minimal header (just enough for k-NN to read)
+            // Format: [header][vectors][footer]
+            // We write a simple format that VecFileIO can read back
+            CodecUtil.writeIndexHeader(out, "Lucene99FlatVectorsFormatData", 0, new byte[16], "");
+            
+            long dataOffset = out.getFilePointer();
+            
+            // Write vectors in new order
+            for (int newIdx = 0; newIdx < n; newIdx++) {
+                int oldIdx = newOrder[newIdx];
+                float[] vec = vectors[oldIdx];
+                for (float v : vec) {
+                    out.writeInt(Float.floatToIntBits(v));
+                }
+            }
+            
+            CodecUtil.writeFooter(out);
+        }
+    }
 }

@@ -112,3 +112,29 @@ JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAn
     faiss_core::buildAndWriteIndex(vectors, numVectors, dimension, ids,
                                     indexDesc, metric, efConstruction, efSearch, outputPath);
 }
+
+JNIEXPORT void JNICALL Java_org_opensearch_knn_reorder_FaissIndexService_buildAndWriteBinaryIndex(
+    JNIEnv* env, jclass cls,
+    jbyteArray vectorsJ, jint numVectors, jint dimension, jintArray idsJ,
+    jint hnswM, jint efConstruction, jint efSearch, jstring outputPathJ)
+{
+    // Marshal vectors
+    jbyte* vectorsPtr = env->GetByteArrayElements(vectorsJ, nullptr);
+    
+    // Marshal output path
+    const char* outputPathCStr = env->GetStringUTFChars(outputPathJ, nullptr);
+    std::string outputPath(outputPathCStr);
+    env->ReleaseStringUTFChars(outputPathJ, outputPathCStr);
+    
+    // Marshal IDs
+    jint* idsPtr = env->GetIntArrayElements(idsJ, nullptr);
+    int numIds = env->GetArrayLength(idsJ);
+    std::vector<int64_t> ids(idsPtr, idsPtr + numIds);
+    env->ReleaseIntArrayElements(idsJ, idsPtr, JNI_ABORT);
+    
+    faiss_core::buildAndWriteBinaryIndex(reinterpret_cast<uint8_t*>(vectorsPtr), 
+                                          numVectors, dimension, ids,
+                                          hnswM, efConstruction, efSearch, outputPath);
+    
+    env->ReleaseByteArrayElements(vectorsJ, vectorsPtr, JNI_ABORT);
+}

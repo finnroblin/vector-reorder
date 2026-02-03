@@ -44,4 +44,27 @@ public class FaissIndexService {
         int efSearch,
         String outputPath
     );
+
+    /**
+     * Build a FAISS binary HNSW index from quantized vectors and write to file.
+     * 
+     * @param vectors byte array of quantized vectors (n * bytesPerVector)
+     * @param numVectors number of vectors
+     * @param dimension dimension in bits (original dim aligned to 8)
+     * @param ids array of IDs for each vector
+     * @param hnswM HNSW M parameter
+     * @param efConstruction ef_construction parameter
+     * @param efSearch ef_search parameter
+     * @param outputPath path to write the .faiss file
+     */
+    public static native void buildAndWriteBinaryIndex(
+        byte[] vectors,
+        int numVectors,
+        int dimension,
+        int[] ids,
+        int hnswM,
+        int efConstruction,
+        int efSearch,
+        String outputPath
+    );
 }
