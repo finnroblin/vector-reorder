@@ -152,73 +152,59 @@ public class VectorReorder {
     }
 
     /**
-     * K-means reorder vectors from multiple files with HNSW parameters.
+     * K-means reorder vectors from files with HNSW parameters.
+     * Each .vec file is processed independently. If .faiss files are specified,
+     * they must match 1:1 with .vec files by position.
      */
     public static void kmeansReorder(List<String> vecFiles, List<String> faissFiles, 
                                        int metricType, int efSearch, int efConstruction, int m, String spaceType) throws IOException {
-        // Load all vectors from all .vec files
-        List<float[]> allVectors = new ArrayList<>();
-        for (String vecFile : vecFiles) {
-            System.out.println("Loading vectors from: " + vecFile);
-            float[][] vectors = VecFileIO.loadVectors(vecFile);
-            for (float[] v : vectors) allVectors.add(v);
+        if (!faissFiles.isEmpty() && faissFiles.size() != vecFiles.size()) {
+            throw new IllegalArgumentException("Number of .faiss files (" + faissFiles.size() + 
+                ") must match number of .vec files (" + vecFiles.size() + ")");
         }
 
-        int n = allVectors.size();
-        int dim = allVectors.get(0).length;
-        int k = 100;
-
-        System.out.println("Total vectors loaded: " + n + " (dim=" + dim + ")");
+        System.out.println("=== K-Means Reorder ===");
+        System.out.println("Vec files: " + vecFiles);
+        System.out.println("FAISS files: " + (faissFiles.isEmpty() ? "(none)" : faissFiles));
         System.out.println("Parameters: space=" + spaceType + ", ef_search=" + efSearch + 
                           ", ef_construction=" + efConstruction + ", m=" + m);
-
-        float[][] vectorArray = allVectors.toArray(new float[0][]);
-        if (n > 100_000) {
-            System.out.println("Vector 100000 BEFORE sort: " + formatVector(vectorArray[100_000]));
-        }
+        System.out.println();
 
         String metricName = metricType == FaissKMeansService.METRIC_INNER_PRODUCT ? "inner_product" : "l2";
-        System.out.println("Running k-means with k=" + k + ", metric=" + metricName + "...");
-        
-        long addr = FaissKMeansService.storeVectors(vectorArray);
-        KMeansResult result = FaissKMeansService.kmeansWithDistances(addr, n, dim, k, 1, metricType);
-        FaissKMeansService.freeVectors(addr);
 
-        int[] newOrder = ClusterSorter.sortByCluster(result.assignments(), result.distances(), metricType);
+        for (int i = 0; i < vecFiles.size(); i++) {
+            String vecFile = vecFiles.get(i);
+            String faissFile = faissFiles.isEmpty() ? null : faissFiles.get(i);
 
-        if (n > 100_000) {
-            System.out.println("Vector 100000 AFTER sort: " + formatVector(vectorArray[newOrder[100_000]]));
-            System.out.println("  (was original index " + newOrder[100_000] + 
-                             ", cluster " + result.assignments()[newOrder[100_000]] + 
-                             ", distance " + result.distances()[newOrder[100_000]] + ")");
-        }
+            System.out.println("Processing: " + vecFile);
+            float[][] vectors = VecFileIO.loadVectors(vecFile);
+            int n = vectors.length;
+            int dim = vectors[0].length;
+            int k = Math.min(100, n / 10);  // Adaptive k
 
-        // Rebuild FAISS indices with the new order (only if --faiss was specified)
-        if (!faissFiles.isEmpty()) {
-            for (String faissFile : faissFiles) {
-                String outputPath = faissFile.replace(".faiss", "_reordered.faiss");
-                System.out.println("Rebuilding FAISS index: " + faissFile + " -> " + outputPath);
-                FaissIndexRebuilder.rebuild(vectorArray, newOrder, dim, outputPath, m, efConstruction, efSearch, spaceType);
+            System.out.println("  Loaded " + n + " vectors (dim=" + dim + "), k=" + k);
+
+            long addr = FaissKMeansService.storeVectors(vectors);
+            KMeansResult result = FaissKMeansService.kmeansWithDistances(addr, n, dim, k, 1, metricType);
+            FaissKMeansService.freeVectors(addr);
+
+            int[] newOrder = ClusterSorter.sortByCluster(result.assignments(), result.distances(), metricType);
+
+            // Reorder .vec file
+            String outputVec = vecFile.replace(".vec", "_reordered.vec");
+            System.out.println("  Writing: " + outputVec);
+            VecFileIO.writeReordered(vecFile, outputVec, newOrder);
+
+            // Rebuild FAISS if specified
+            if (faissFile != null) {
+                String outputFaiss = faissFile.replace(".faiss", "_reordered.faiss");
+                System.out.println("  Rebuilding: " + outputFaiss);
+                long[] oldIdMapping = FaissFilePermuter.readIdMapping(faissFile);
+                FaissIndexRebuilder.rebuild(vectors, newOrder, oldIdMapping, dim, outputFaiss, m, efConstruction, efSearch, spaceType);
             }
         }
 
-        // Reorder .vec files
-        for (String vecFile : vecFiles) {
-            String outputPath = vecFile.replace(".vec", "_reordered.vec");
-            System.out.println("Reordering .vec file: " + vecFile + " -> " + outputPath);
-            VecFileIO.writeReordered(vecFile, outputPath, newOrder);
-        }
-        
-        // Show first few vectors in cluster 0
-        System.out.println("\nFirst 5 vectors in cluster 0:");
-        int count = 0;
-        for (int i = 0; i < n && count < 5; i++) {
-            int origIdx = newOrder[i];
-            if (result.assignments()[origIdx] == 0) {
-                System.out.println("  idx=" + origIdx + ", distance=" + result.distances()[origIdx]);
-                count++;
-            }
-        }
+        System.out.println("\nK-means reorder complete!");
     }
 
     private static String formatVector(float[] vector) {

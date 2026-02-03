@@ -104,6 +104,25 @@ tasks.register('reorder', JavaExec) {
     ]
 }
 
+// K-means reorder - usage: ./gradlew kmeansReorder -Pvec=file1.vec,file2.vec [-Pfaiss=file1.faiss,file2.faiss] [-Pspace=l2] [-PefSearch=100] [-PefConstruction=100] [-Pm=16]
+tasks.register('kmeansReorder', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.opensearch.knn.reorder.VectorReorder'
+    jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
+    doFirst {
+        def argList = ['kmeans-reorder']
+        def vecFiles = (project.findProperty('vec') ?: '').split(',').findAll { it }
+        vecFiles.each { argList += ['--vec', it] }
+        def faissFiles = (project.findProperty('faiss') ?: '').split(',').findAll { it }
+        faissFiles.each { argList += ['--faiss', it] }
+        if (project.hasProperty('space')) argList += ['--space', project.space]
+        if (project.hasProperty('efSearch')) argList += ['--ef-search', project.efSearch]
+        if (project.hasProperty('efConstruction')) argList += ['--ef-construction', project.efConstruction]
+        if (project.hasProperty('m')) argList += ['--m', project.m]
+        args = argList
+    }
+}
+
 // E2E script - usage: ./gradlew runE2E -PindexDir=<path> [-Pclusters=1000]
 tasks.register('runE2E', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
@@ -115,17 +134,26 @@ tasks.register('runE2E', JavaExec) {
     ]
 }
 
-// BP reorder tool - usage: ./gradlew bpReorder -PvecFile=<path> -PinputFaiss=<path> -PoutputFaiss=<path> -PoutputVec=<path>
+// BP reorder tool - usage: ./gradlew bpReorder -Pvec=file1.vec,file2.vec [-Pfaiss=file1.faiss,file2.faiss] [-Pspace=l2] [-PefSearch=100] [-PefConstruction=100] [-Pm=16]
 tasks.register('bpReorder', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'org.opensearch.knn.reorder.BpReorderTool'
     jvmArgs = ["-Djava.library.path=${projectDir}/jni/release", "-Xmx8g"]
-    args = [
-        project.findProperty('vecFile') ?: '',
-        project.findProperty('inputFaiss') ?: '',
-        project.findProperty('outputFaiss') ?: '',
-        project.findProperty('outputVec') ?: ''
-    ]
+    doFirst {
+        def argList = ['bp-reorder']
+        // Parse comma-separated vec files
+        def vecFiles = (project.findProperty('vec') ?: '').split(',').findAll { it }
+        vecFiles.each { argList += ['--vec', it] }
+        // Parse comma-separated faiss files (optional)
+        def faissFiles = (project.findProperty('faiss') ?: '').split(',').findAll { it }
+        faissFiles.each { argList += ['--faiss', it] }
+        // HNSW params
+        if (project.hasProperty('space')) argList += ['--space', project.space]
+        if (project.hasProperty('efSearch')) argList += ['--ef-search', project.efSearch]
+        if (project.hasProperty('efConstruction')) argList += ['--ef-construction', project.efConstruction]
+        if (project.hasProperty('m')) argList += ['--m', project.m]
+        args = argList
+    }
 }
 
 // BP reorder raw_test_files to bp_files
